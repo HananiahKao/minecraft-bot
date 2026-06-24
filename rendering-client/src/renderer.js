@@ -80,7 +80,7 @@ export class MinecraftRenderer {
       oak_leaves: 0x228b22,
       water: 0x4da6ff,
       lava: 0xff6600,
-      default: 0xc0c0c0
+      default: 0xff00ff
     };
 
     const getBlockColor = (blockName) => {
