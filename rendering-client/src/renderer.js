@@ -71,15 +71,41 @@ export class MinecraftRenderer {
 
     const blockSize = 1;
     const blockColors = {
+      // Earth & Rock
       stone: 0x808080,
       dirt: 0x8b7355,
       grass_block: 0x2d8659,
       sand: 0xdfc55a,
       gravel: 0x757575,
+      cobblestone: 0x707070,
+      bedrock: 0x1a1a1a,
+      clay: 0xa8a8a8,
+      // Wood
       oak_log: 0x6b4423,
+      spruce_log: 0x4a3728,
+      birch_log: 0xd4af8f,
+      jungle_log: 0x5c3c1f,
+      oak_wood: 0x6b4423,
       oak_leaves: 0x228b22,
-      water: 0x4da6ff,
-      lava: 0xff6600,
+      spruce_leaves: 0x1a4d1a,
+      birch_leaves: 0x4d7d4d,
+      jungle_leaves: 0x2d5c2d,
+      // Ores
+      coal_ore: 0x505050,
+      iron_ore: 0x8b7355,
+      gold_ore: 0xb8860b,
+      diamond_ore: 0x33ebcb,
+      emerald_ore: 0x20c997,
+      // Liquids (darker water)
+      water: 0x1a4d7a,
+      lava: 0xff3300,
+      // Concrete & Building
+      concrete: 0x707070,
+      brick: 0xa85c3c,
+      obsidian: 0x0a0a0a,
+      // Misc
+      bookshelf: 0x6b5c3c,
+      furnace: 0x5c5c5c,
       default: 0xff00ff
     };
 
