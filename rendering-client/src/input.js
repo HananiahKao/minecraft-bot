@@ -2,6 +2,8 @@
  * Input handling for camera movement and mouse look
  */
 
+import * as THREE from 'three';
+
 export class InputHandler {
   constructor(camera) {
     this.camera = camera;
