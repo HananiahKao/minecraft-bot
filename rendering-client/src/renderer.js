@@ -51,11 +51,10 @@ export class MinecraftRenderer {
   addChunk(chunkX, chunkZ, blocks) {
     const chunkKey = `${chunkX},${chunkZ}`;
 
+    // Don't re-add chunks that already exist (deduplicate)
     if (this.chunkMeshes.has(chunkKey)) {
-      const oldMesh = this.chunkMeshes.get(chunkKey);
-      this.scene.remove(oldMesh);
-      oldMesh.geometry.dispose();
-      oldMesh.material.dispose();
+      console.log(`⚠️ Chunk ${chunkKey} already loaded, skipping duplicate`);
+      return;
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -70,6 +69,8 @@ export class MinecraftRenderer {
     }
 
     const blockSize = 1;
+    const unknownBlocksLogged = new Set();
+
     const blockColors = {
       // Basic Earth & Stone
       stone: 0x808080,
@@ -181,8 +182,12 @@ export class MinecraftRenderer {
       chest: 0x8b6f47,
       barrel: 0x8b6f47,
       smithing_table: 0x6b5c3c,
-      // Liquids (darker water)
+      // Liquids & Aquatics
       water: 0x1a4d7a,
+      seagrass: 0x2d8659,
+      tall_seagrass: 0x2d8659,
+      kelp_plant: 0x1a6b3a,
+      kelp: 0x1a6b3a,
       lava: 0xff3300,
       // Nether
       netherrack: 0x6b3a2a,
@@ -203,7 +208,11 @@ export class MinecraftRenderer {
           return color;
         }
       }
-      console.warn(`⚠️ Unknown block type: ${blockName} (rendering as pink)`);
+      // Only log unknown block once
+      if (!unknownBlocksLogged.has(blockName)) {
+        console.warn(`⚠️ Unknown block type: ${blockName} (rendering as pink)`);
+        unknownBlocksLogged.add(blockName);
+      }
       return blockColors.default;
     };
 
