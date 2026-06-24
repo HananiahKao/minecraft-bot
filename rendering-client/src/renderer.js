@@ -203,6 +203,7 @@ export class MinecraftRenderer {
           return color;
         }
       }
+      console.warn(`⚠️ Unknown block type: ${blockName} (rendering as pink)`);
       return blockColors.default;
     };
 

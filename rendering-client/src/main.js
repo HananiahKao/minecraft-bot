@@ -14,6 +14,7 @@ let connection = null;
 let lastChunkRequestTime = 0;
 let botReadyPosition = null;
 let chunksLoadedCount = 0;
+let totalChunksLoaded = 0;
 let cameraSyncedWithBot = false;
 const CHUNKS_BEFORE_CAMERA_MOVE = 5;
 
@@ -51,9 +52,13 @@ function onBotReady(data) {
 function onChunkReceived(chunkData) {
   try {
     renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
+    totalChunksLoaded++;
+    console.log(`📦 Chunk ${chunkData.x},${chunkData.z} loaded (total: ${totalChunksLoaded})`);
     if (!cameraSyncedWithBot && botReadyPosition) {
       chunksLoadedCount++;
       updateStatus(`Loading chunks (${chunksLoadedCount}/${CHUNKS_BEFORE_CAMERA_MOVE})`);
+    } else if (cameraSyncedWithBot) {
+      updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
     }
   } catch (e) {
     console.error('Failed to render chunk:', e.message);
@@ -72,22 +77,17 @@ function startUpdateLoop() {
     inputHandler.update();
     renderer.render();
 
-    // Phase 2.5: Only send positions after camera has synced to bot
-    if (cameraSyncedWithBot && botReadyPosition) {
-      if (!cameraSyncedWithBot) {
-        cameraSyncedWithBot = true;
-      }
-      if (botReadyPosition && chunksLoadedCount >= CHUNKS_BEFORE_CAMERA_MOVE) {
-        renderer.setCameraPosition(
-          botReadyPosition.x,
-          botReadyPosition.y + 1.6,
-          botReadyPosition.z
-        );
-        updateStatus('🎮 Playing');
-        console.log(`🎥 Camera synced to bot after ${chunksLoadedCount} chunks`);
-        botReadyPosition = null;
-        cameraSyncedWithBot = true;
-      }
+    // Phase 2.5: Sync camera to bot position, then send position updates
+    if (botReadyPosition && chunksLoadedCount >= CHUNKS_BEFORE_CAMERA_MOVE && !cameraSyncedWithBot) {
+      renderer.setCameraPosition(
+        botReadyPosition.x,
+        botReadyPosition.y + 1.6,
+        botReadyPosition.z
+      );
+      updateStatus('🎮 Playing | Chunks: ' + totalChunksLoaded);
+      console.log(`🎥 Camera teleported to bot at (${botReadyPosition.x.toFixed(1)}, ${botReadyPosition.y.toFixed(1)}, ${botReadyPosition.z.toFixed(1)})`);
+      botReadyPosition = null;
+      cameraSyncedWithBot = true;
     }
 
     // Send camera position periodically (only after sync)
