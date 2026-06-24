@@ -7,7 +7,11 @@ logs/
 
 # Minecraft Server Data
 server.jar
+server.properties
 world/
+world_*/
+world 2/
+world 3/
 world_nether/
 world_the_end/
 crash-reports/
@@ -16,6 +20,12 @@ banned-ips.json
 ops.json
 whitelist.json
 eula.txt
+usercache.json
+launcher_profiles.json
+
+# Minecraft Libraries (auto-downloaded)
+libraries/
+versions/
 
 # User Cache & Temp
 .DS_Store
@@ -24,7 +34,6 @@ eula.txt
 *~
 .env
 .env.local
-usercache.json
 
 # Video/Screenshots (debugging only)
 video-frames/
@@ -35,7 +44,12 @@ video-frames/
 .vscode/
 .idea/
 *.iml
+*.swc
 
 # Package managers
 package-lock.json
 yarn.lock
+
+# macOS
+.AppleDouble
+.LSOverride
