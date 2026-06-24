@@ -7,7 +7,6 @@ logs/
 
 # Minecraft Server Data
 server.jar
-server.properties
 world/
 world_*/
 world 2/
