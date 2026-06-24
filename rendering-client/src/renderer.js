@@ -105,122 +105,55 @@ export class MinecraftRenderer {
       return false;
     };
 
-    const addFace = (vertices, color) => {
-      const baseIndex = positions.length / 3;
-      for (const v of vertices) {
-        positions.push(...v);
-        const rgb = new THREE.Color(color);
-        colors.push(rgb.r, rgb.g, rgb.b);
-      }
-      const normal = new THREE.Vector3();
-      const v0 = new THREE.Vector3(...vertices[0]);
-      const v1 = new THREE.Vector3(...vertices[1]);
-      const v2 = new THREE.Vector3(...vertices[2]);
-      normal.crossVectors(
-        v1.clone().sub(v0),
-        v2.clone().sub(v0)
-      ).normalize();
-      for (let i = 0; i < 4; i++) {
-        normals.push(normal.x, normal.y, normal.z);
-      }
-      positions.push(...vertices[0], ...vertices[2], ...vertices[3]);
-      colors.push(...colors.slice(baseIndex * 3 + 9, baseIndex * 3 + 12), ...colors.slice(baseIndex * 3 + 6, baseIndex * 3 + 9));
-      for (let i = 0; i < 2; i++) {
-        normals.push(normal.x, normal.y, normal.z);
-      }
-    };
-
     for (const block of blocks) {
       const { x, y, z, name } = block;
       const color = getBlockColor(name);
+      const rgb = new THREE.Color(color);
       const bx = chunkX * 16 + x;
       const by = y;
       const bz = chunkZ * 16 + z;
 
+      // Top face
       if (shouldRenderFace(x, y, z, 'top')) {
-        positions.push(
-          bx, by + 1, bz,
-          bx + 1, by + 1, bz,
-          bx + 1, by + 1, bz + 1,
-          bx, by + 1, bz + 1
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(0, 1, 0);
-        }
+        positions.push(bx, by + 1, bz, bx + 1, by + 1, bz, bx + 1, by + 1, bz + 1);
+        positions.push(bx, by + 1, bz, bx + 1, by + 1, bz + 1, bx, by + 1, bz + 1);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 1, 0); }
       }
+      // Bottom face
       if (shouldRenderFace(x, y, z, 'bottom')) {
-        positions.push(
-          bx, by, bz,
-          bx, by, bz + 1,
-          bx + 1, by, bz + 1,
-          bx + 1, by, bz
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(0, -1, 0);
-        }
+        positions.push(bx, by, bz, bx + 1, by, bz + 1, bx + 1, by, bz);
+        positions.push(bx, by, bz, bx, by, bz + 1, bx + 1, by, bz + 1);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, -1, 0); }
       }
+      // Front face (+Z)
       if (shouldRenderFace(x, y, z, 'front')) {
-        positions.push(
-          bx, by, bz + 1,
-          bx + 1, by, bz + 1,
-          bx + 1, by + 1, bz + 1,
-          bx, by + 1, bz + 1
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(0, 0, 1);
-        }
+        positions.push(bx, by, bz + 1, bx + 1, by, bz + 1, bx + 1, by + 1, bz + 1);
+        positions.push(bx, by, bz + 1, bx + 1, by + 1, bz + 1, bx, by + 1, bz + 1);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 0, 1); }
       }
+      // Back face (-Z)
       if (shouldRenderFace(x, y, z, 'back')) {
-        positions.push(
-          bx + 1, by, bz,
-          bx, by, bz,
-          bx, by + 1, bz,
-          bx + 1, by + 1, bz
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(0, 0, -1);
-        }
+        positions.push(bx + 1, by, bz, bx, by, bz, bx, by + 1, bz);
+        positions.push(bx + 1, by, bz, bx, by + 1, bz, bx + 1, by + 1, bz);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 0, -1); }
       }
+      // Right face (+X)
       if (shouldRenderFace(x, y, z, 'right')) {
-        positions.push(
-          bx + 1, by, bz,
-          bx + 1, by, bz + 1,
-          bx + 1, by + 1, bz + 1,
-          bx + 1, by + 1, bz
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(1, 0, 0);
-        }
+        positions.push(bx + 1, by, bz, bx + 1, by, bz + 1, bx + 1, by + 1, bz + 1);
+        positions.push(bx + 1, by, bz, bx + 1, by + 1, bz + 1, bx + 1, by + 1, bz);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(1, 0, 0); }
       }
+      // Left face (-X)
       if (shouldRenderFace(x, y, z, 'left')) {
-        positions.push(
-          bx, by, bz + 1,
-          bx, by, bz,
-          bx, by + 1, bz,
-          bx, by + 1, bz + 1
-        );
-        for (let i = 0; i < 4; i++) {
-          colors.push(...new THREE.Color(color).toArray());
-          normals.push(-1, 0, 0);
-        }
+        positions.push(bx, by, bz + 1, bx, by, bz, bx, by + 1, bz);
+        positions.push(bx, by, bz + 1, bx, by + 1, bz, bx, by + 1, bz + 1);
+        for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(-1, 0, 0); }
       }
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
-
-    const indices = [];
-    for (let i = 0; i < positions.length / 12; i++) {
-      indices.push(i * 4, i * 4 + 1, i * 4 + 2);
-      indices.push(i * 4, i * 4 + 2, i * 4 + 3);
-    }
-    geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
 
     const material = new THREE.MeshPhongMaterial({
       vertexColors: true,

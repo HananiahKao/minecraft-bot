@@ -54,8 +54,8 @@ export class InputHandler {
     const movementY = e.movementY || e.mozMovementY || 0;
 
     this.euler.setFromQuaternion(this.camera.quaternion);
-    this.euler.rotateY(-movementX * 0.003);
-    this.euler.rotateX(-movementY * 0.003);
+    this.euler.y -= movementX * 0.003;
+    this.euler.x -= movementY * 0.003;
 
     this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
     this.camera.quaternion.setFromEuler(this.euler);
