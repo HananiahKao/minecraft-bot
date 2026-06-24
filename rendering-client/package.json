@@ -1,0 +1,12 @@
+{
+  "name": "minecraft-rendering-client",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Three.js rendering client for Minecraft",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {}
+}

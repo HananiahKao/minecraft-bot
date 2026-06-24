@@ -1,0 +1,17 @@
+{
+  "name": "minecraft-bridge",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WebSocket bridge between Mineflayer bot and rendering client",
+  "main": "server-bridge.js",
+  "scripts": {
+    "start": "node server-bridge.js",
+    "dev": "MC_HOST=localhost MC_PORT=25565 BOT_USER=RenderBot node server-bridge.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.2",
+    "vec3": "^0.1.8",
+    "prismarine-chunk": "^1.36.5",
+    "ws": "^8.16.0"
+  }
+}

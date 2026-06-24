@@ -1,0 +1,41 @@
+# Runtime & Generated Data
+node_modules/
+dist/
+build/
+*.log
+logs/
+
+# Minecraft Server Data
+server.jar
+world/
+world_nether/
+world_the_end/
+crash-reports/
+banned-players.json
+banned-ips.json
+ops.json
+whitelist.json
+eula.txt
+
+# User Cache & Temp
+.DS_Store
+*.swp
+*.swo
+*~
+.env
+.env.local
+usercache.json
+
+# Video/Screenshots (debugging only)
+video-frames/
+*.mov
+*.mp4
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Package managers
+package-lock.json
+yarn.lock
