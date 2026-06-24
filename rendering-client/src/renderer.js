@@ -113,40 +113,40 @@ export class MinecraftRenderer {
       const by = y;
       const bz = chunkZ * 16 + z;
 
-      // Top face
+      // Top face (CCW from above)
       if (shouldRenderFace(x, y, z, 'top')) {
-        positions.push(bx, by + 1, bz, bx + 1, by + 1, bz, bx + 1, by + 1, bz + 1);
-        positions.push(bx, by + 1, bz, bx + 1, by + 1, bz + 1, bx, by + 1, bz + 1);
+        positions.push(bx, by + 1, bz + 1, bx + 1, by + 1, bz + 1, bx + 1, by + 1, bz);
+        positions.push(bx, by + 1, bz + 1, bx + 1, by + 1, bz, bx, by + 1, bz);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 1, 0); }
       }
-      // Bottom face
+      // Bottom face (CCW from below)
       if (shouldRenderFace(x, y, z, 'bottom')) {
-        positions.push(bx, by, bz, bx + 1, by, bz + 1, bx + 1, by, bz);
-        positions.push(bx, by, bz, bx, by, bz + 1, bx + 1, by, bz + 1);
+        positions.push(bx, by, bz, bx + 1, by, bz, bx + 1, by, bz + 1);
+        positions.push(bx, by, bz, bx + 1, by, bz + 1, bx, by, bz + 1);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, -1, 0); }
       }
-      // Front face (+Z)
+      // Front face +Z (CCW from front)
       if (shouldRenderFace(x, y, z, 'front')) {
-        positions.push(bx, by, bz + 1, bx + 1, by, bz + 1, bx + 1, by + 1, bz + 1);
-        positions.push(bx, by, bz + 1, bx + 1, by + 1, bz + 1, bx, by + 1, bz + 1);
+        positions.push(bx + 1, by, bz + 1, bx, by, bz + 1, bx, by + 1, bz + 1);
+        positions.push(bx + 1, by, bz + 1, bx, by + 1, bz + 1, bx + 1, by + 1, bz + 1);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 0, 1); }
       }
-      // Back face (-Z)
+      // Back face -Z (CCW from back)
       if (shouldRenderFace(x, y, z, 'back')) {
-        positions.push(bx + 1, by, bz, bx, by, bz, bx, by + 1, bz);
-        positions.push(bx + 1, by, bz, bx, by + 1, bz, bx + 1, by + 1, bz);
+        positions.push(bx, by, bz, bx + 1, by, bz, bx + 1, by + 1, bz);
+        positions.push(bx, by, bz, bx + 1, by + 1, bz, bx, by + 1, bz);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(0, 0, -1); }
       }
-      // Right face (+X)
+      // Right face +X (CCW from right)
       if (shouldRenderFace(x, y, z, 'right')) {
-        positions.push(bx + 1, by, bz, bx + 1, by, bz + 1, bx + 1, by + 1, bz + 1);
-        positions.push(bx + 1, by, bz, bx + 1, by + 1, bz + 1, bx + 1, by + 1, bz);
+        positions.push(bx + 1, by, bz + 1, bx + 1, by, bz, bx + 1, by + 1, bz);
+        positions.push(bx + 1, by, bz + 1, bx + 1, by + 1, bz, bx + 1, by + 1, bz + 1);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(1, 0, 0); }
       }
-      // Left face (-X)
+      // Left face -X (CCW from left)
       if (shouldRenderFace(x, y, z, 'left')) {
-        positions.push(bx, by, bz + 1, bx, by, bz, bx, by + 1, bz);
-        positions.push(bx, by, bz + 1, bx, by + 1, bz, bx, by + 1, bz + 1);
+        positions.push(bx, by, bz, bx, by, bz + 1, bx, by + 1, bz + 1);
+        positions.push(bx, by, bz, bx, by + 1, bz + 1, bx, by + 1, bz);
         for (let i = 0; i < 6; i++) { colors.push(rgb.r, rgb.g, rgb.b); normals.push(-1, 0, 0); }
       }
     }
