@@ -158,7 +158,7 @@ export class MinecraftRenderer {
     const material = new THREE.MeshPhongMaterial({
       vertexColors: true,
       flatShading: true,
-      side: THREE.FrontSide,
+      side: THREE.DoubleSide,
       wireframe: false
     });
 
