@@ -112,7 +112,7 @@ export class MinecraftRenderer {
       // Ores
       coal_ore: 0x505050,
       iron_ore: 0x8b7355,
-      copper_ore: 0x a8826b,
+      copper_ore: 0xa8826b,
       gold_ore: 0xb8860b,
       diamond_ore: 0x33ebcb,
       emerald_ore: 0x20c997,
