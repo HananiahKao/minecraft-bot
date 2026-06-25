@@ -51,13 +51,16 @@ function onBotReady(data) {
 
 function onChunkReceived(chunkData) {
   try {
-    renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
-    totalChunksLoaded++;
-    console.log(`📦 Chunk ${chunkData.x},${chunkData.z} loaded (total: ${totalChunksLoaded})`);
-    if (!cameraSyncedWithBot && botReadyPosition) {
-      chunksLoadedCount++;
-      updateStatus(`Loading chunks (${chunksLoadedCount}/${CHUNKS_BEFORE_CAMERA_MOVE})`);
-    } else if (cameraSyncedWithBot) {
+    const chunkAdded = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
+    if (chunkAdded) {
+      totalChunksLoaded++;
+      console.log(`📦 Chunk ${chunkData.x},${chunkData.z} loaded (total: ${totalChunksLoaded})`);
+      if (!cameraSyncedWithBot && botReadyPosition) {
+        chunksLoadedCount++;
+        updateStatus(`Loading chunks (${chunksLoadedCount}/${CHUNKS_BEFORE_CAMERA_MOVE})`);
+      }
+    }
+    if (cameraSyncedWithBot) {
       updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
     }
   } catch (e) {

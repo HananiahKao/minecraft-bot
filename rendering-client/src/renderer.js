@@ -54,7 +54,7 @@ export class MinecraftRenderer {
     // Don't re-add chunks that already exist (deduplicate)
     if (this.chunkMeshes.has(chunkKey)) {
       console.log(`⚠️ Chunk ${chunkKey} already loaded, skipping duplicate`);
-      return;
+      return false;
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -385,6 +385,7 @@ export class MinecraftRenderer {
     const mesh = new THREE.Mesh(geometry, material);
     this.scene.add(mesh);
     this.chunkMeshes.set(chunkKey, mesh);
+    return true;
   }
 
   removeChunk(chunkX, chunkZ) {
