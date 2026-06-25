@@ -16,7 +16,7 @@ let botReadyPosition = null;
 let chunksLoadedCount = 0;
 let totalChunksLoaded = 0;
 let cameraSyncedWithBot = false;
-const CHUNKS_BEFORE_CAMERA_MOVE = 5;
+const CHUNKS_BEFORE_CAMERA_MOVE = 25;
 
 function init() {
   const container = document.getElementById('canvas');
