@@ -84,6 +84,15 @@ function initBot() {
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning at spawn...');
     botReady = false;
+    setTimeout(() => {
+      try {
+        bot.respawn();
+        console.log('✅ Bot respawned!');
+        botReady = true;
+      } catch (e) {
+        console.warn('Respawn failed:', e.message);
+      }
+    }, 1000);
   });
 
   bot.on('error', (err) => {
@@ -229,22 +238,48 @@ wss.on('connection', (ws) => {
             if (cameraPos.y >= 0 && cameraPos.y <= 256 && dist <= 1000) {
               lastCameraPosition = cameraPos;
 
-              // Phase 2.5: Bot walks to camera (not teleport)
+              // Phase 2.5: Bot walks to camera (not teleport) with safety checks
               if (dist > 0.5) {
                 try {
-                  bot.lookAt(new Vec3(cameraPos.x, cameraPos.y, cameraPos.z));
+                  const isInWater = bot.entity.isInWater;
+                  const isInLava = bot.entity.isInLava;
+
+                  // If in danger, jump up (water escape) or stop
+                  if (isInWater || isInLava) {
+                    bot.setControlState('jump', true);
+                    setTimeout(() => bot.setControlState('jump', false), 500);
+                  }
+
+                  // Look and walk toward target
+                  bot.lookAt(new Vec3(cameraPos.x, cameraPos.y + 1.6, cameraPos.z));
                   bot.setControlState('forward', true);
-                  setTimeout(() => {
+
+                  // Check distance regularly and stop when close
+                  const checkInterval = setInterval(() => {
+                    if (!botReady || !bot || !bot.entity) {
+                      clearInterval(checkInterval);
+                      bot.setControlState('forward', false);
+                      return;
+                    }
+
                     const nowDist = Math.sqrt(
                       Math.pow(bot.entity.position.x - cameraPos.x, 2) +
                       Math.pow(bot.entity.position.z - cameraPos.z, 2)
                     );
-                    if (nowDist < 0.5) {
+
+                    if (nowDist < 1.5) {
+                      clearInterval(checkInterval);
                       bot.setControlState('forward', false);
                     }
-                  }, 100);
+                  }, 250);
+
+                  // Safety timeout - stop after 10 seconds max
+                  setTimeout(() => {
+                    bot.setControlState('forward', false);
+                  }, 10000);
                 } catch (e) {
                   console.warn('Movement failed:', e.message);
+                  bot.setControlState('forward', false);
                 }
               }
 
