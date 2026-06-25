@@ -39,6 +39,25 @@ video-frames/
 *.mov
 *.mp4
 
+# Browser/Testing Artifacts
+.playwright-mcp/
+*-console*.txt
+*-render*.png
+*-output.png
+*-screenshot.png
+browser-*.txt
+console-*.txt
+nav-*.png
+nav-*.txt
+phase-*.png
+phase-*.txt
+final-*.png
+final-*.txt
+rendering-*.png
+updated-*.png
+updated-*.txt
+minecraft-server.png
+
 # IDE
 .vscode/
 .idea/
