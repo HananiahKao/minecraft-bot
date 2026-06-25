@@ -246,19 +246,33 @@ wss.on('connection', (ws) => {
 
                   // If in danger, jump up (water escape) or stop
                   if (isInWater || isInLava) {
-                    bot.setControlState('jump', true);
-                    setTimeout(() => bot.setControlState('jump', false), 500);
+                    try {
+                      bot.setControlState('jump', true);
+                      setTimeout(() => {
+                        if (bot && bot.entity) bot.setControlState('jump', false);
+                      }, 500);
+                    } catch (e) {
+                      console.warn('Jump failed:', e.message);
+                    }
                   }
 
                   // Look and walk toward target
-                  bot.lookAt(new Vec3(cameraPos.x, cameraPos.y + 1.6, cameraPos.z));
-                  bot.setControlState('forward', true);
+                  try {
+                    bot.lookAt(new Vec3(cameraPos.x, cameraPos.y + 1.6, cameraPos.z));
+                    bot.setControlState('forward', true);
+                  } catch (e) {
+                    console.warn('Look/walk failed:', e.message);
+                  }
 
                   // Check distance regularly and stop when close
                   const checkInterval = setInterval(() => {
                     if (!botReady || !bot || !bot.entity) {
                       clearInterval(checkInterval);
-                      bot.setControlState('forward', false);
+                      try {
+                        bot.setControlState('forward', false);
+                      } catch (e) {
+                        // Bot invalid
+                      }
                       return;
                     }
 
@@ -269,13 +283,21 @@ wss.on('connection', (ws) => {
 
                     if (nowDist < 1.5) {
                       clearInterval(checkInterval);
-                      bot.setControlState('forward', false);
+                      try {
+                        bot.setControlState('forward', false);
+                      } catch (e) {
+                        console.warn('Stop movement failed:', e.message);
+                      }
                     }
                   }, 250);
 
                   // Safety timeout - stop after 10 seconds max
                   setTimeout(() => {
-                    bot.setControlState('forward', false);
+                    try {
+                      if (bot && bot.entity) bot.setControlState('forward', false);
+                    } catch (e) {
+                      console.warn('Timeout stop failed:', e.message);
+                    }
                   }, 10000);
                 } catch (e) {
                   console.warn('Movement failed:', e.message);
