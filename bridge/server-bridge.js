@@ -40,7 +40,8 @@ function initBot() {
     host: MINECRAFT_HOST,
     port: MINECRAFT_PORT,
     username: BOT_USERNAME,
-    logErrors: false
+    logErrors: true,
+    skipValidation: true
   });
 
   bot.on('spawn', () => {
