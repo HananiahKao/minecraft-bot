@@ -119,7 +119,7 @@ function broadcastMessage(message) {
   try {
     const data = JSON.stringify(message);
     connectedClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
+      if (client.readyState === 1) { // WebSocket.OPEN = 1
         try {
           client.send(data);
         } catch (e) {
@@ -224,6 +224,7 @@ wss.on('connection', (ws) => {
 
       switch (message.type) {
         case 'request_chunks':
+          console.log(`[MOVE] Received position request: (${message.position[0].toFixed(1)}, ${message.position[1].toFixed(1)}, ${message.position[2].toFixed(1)})`);
           if (botReady && bot && bot.entity && message.position) {
             const cameraPos = {
               x: message.position[0],
@@ -236,74 +237,22 @@ wss.on('connection', (ws) => {
             const dz = cameraPos.z - currentPos.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
 
+            console.log(`[MOVE] Distance to target: ${dist.toFixed(1)} blocks (current: ${currentPos.toString()}, target: ${cameraPos.x.toFixed(1)},${cameraPos.z.toFixed(1)})`);
+
             if (cameraPos.y >= 0 && cameraPos.y <= 256 && dist <= 1000) {
               lastCameraPosition = cameraPos;
 
-              // Phase 2.5: Bot walks to camera (not teleport) with safety checks
+              // Teleport bot to camera position for testing chunk streaming
               if (dist > 0.5) {
+                console.log(`[MOVE] Teleporting bot to target (distance: ${dist.toFixed(1)})`);
                 try {
-                  const isInWater = bot.entity.isInWater;
-                  const isInLava = bot.entity.isInLava;
-
-                  // If in danger, jump up (water escape) or stop
-                  if (isInWater || isInLava) {
-                    try {
-                      bot.setControlState('jump', true);
-                      setTimeout(() => {
-                        if (bot && bot.entity) bot.setControlState('jump', false);
-                      }, 500);
-                    } catch (e) {
-                      console.warn('Jump failed:', e.message);
-                    }
-                  }
-
-                  // Look and walk toward target
-                  try {
-                    bot.lookAt(new Vec3(cameraPos.x, cameraPos.y + 1.6, cameraPos.z));
-                    bot.setControlState('forward', true);
-                  } catch (e) {
-                    console.warn('Look/walk failed:', e.message);
-                  }
-
-                  // Check distance regularly and stop when close
-                  const checkInterval = setInterval(() => {
-                    if (!botReady || !bot || !bot.entity) {
-                      clearInterval(checkInterval);
-                      try {
-                        bot.setControlState('forward', false);
-                      } catch (e) {
-                        // Bot invalid
-                      }
-                      return;
-                    }
-
-                    const nowDist = Math.sqrt(
-                      Math.pow(bot.entity.position.x - cameraPos.x, 2) +
-                      Math.pow(bot.entity.position.z - cameraPos.z, 2)
-                    );
-
-                    if (nowDist < 1.5) {
-                      clearInterval(checkInterval);
-                      try {
-                        bot.setControlState('forward', false);
-                      } catch (e) {
-                        console.warn('Stop movement failed:', e.message);
-                      }
-                    }
-                  }, 250);
-
-                  // Safety timeout - stop after 10 seconds max
-                  setTimeout(() => {
-                    try {
-                      if (bot && bot.entity) bot.setControlState('forward', false);
-                    } catch (e) {
-                      console.warn('Timeout stop failed:', e.message);
-                    }
-                  }, 10000);
+                  bot.chat(`/tp ${cameraPos.x.toFixed(1)} ${cameraPos.y.toFixed(1)} ${cameraPos.z.toFixed(1)}`);
+                  console.log(`[MOVE] Teleported to (${cameraPos.x.toFixed(1)}, ${cameraPos.y.toFixed(1)}, ${cameraPos.z.toFixed(1)})`);
                 } catch (e) {
-                  console.warn('Movement failed:', e.message);
-                  bot.setControlState('forward', false);
+                  console.warn('Teleport failed:', e.message);
                 }
+              } else {
+                console.log(`[MOVE] Already at target (distance: ${dist.toFixed(1)} <= 0.5)`);
               }
 
               // Request chunks only if chunk changed
@@ -322,13 +271,13 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => {
-    console.log('🔌 Client disconnected');
+  ws.on('close', (code, reason) => {
+    console.log(`🔌 Client disconnected (code: ${code}, reason: ${reason || 'none'})`);
     connectedClients = connectedClients.filter(c => c !== ws);
   });
 
   ws.on('error', (error) => {
-    console.error('WebSocket error:', error.message);
+    console.error('❌ WebSocket client error:', error.message || error);
   });
 });
 
