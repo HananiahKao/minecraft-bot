@@ -3,7 +3,7 @@
 # Bridge Server Auto-Restart Wrapper
 # Monitors for file changes and restarts gracefully
 
-REPO_DIR="/Users/hananiah/Desktop/minecraft-bot"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRIDGE_DIR="$REPO_DIR/bridge"
 LOG_FILE="$REPO_DIR/bridge-server.log"
 

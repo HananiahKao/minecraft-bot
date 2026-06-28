@@ -3,7 +3,7 @@
 # Rendering Client Auto-Restart Wrapper
 # Monitors for file changes and restarts gracefully
 
-REPO_DIR="/Users/hananiah/Desktop/minecraft-bot"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT_DIR="$REPO_DIR/rendering-client"
 LOG_FILE="$REPO_DIR/rendering-client.log"
 

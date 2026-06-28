@@ -1,10 +1,17 @@
 #!/bin/bash
 
 # Minecraft Bot - TMux Multi-Server Manager
-# Runs three servers in separate tmux windows with logging and auto-restart
+# Runs three servers in separate tmux windows with file-change auto-restart
 
-REPO_DIR="/Users/hananiah/Desktop/minecraft-bot"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_NAME="minecraft-bot"
+
+# Check that scripts exist
+if [ ! -d "$REPO_DIR/scripts" ] || [ ! -f "$REPO_DIR/scripts/restart-minecraft.sh" ]; then
+    echo "❌ Error: Scripts directory or restart scripts not found"
+    echo "   Expected: $REPO_DIR/scripts/{restart-minecraft.sh, restart-bridge.sh, restart-client.sh}"
+    exit 1
+fi
 
 # Kill existing session if it exists
 tmux kill-session -t $SESSION_NAME 2>/dev/null || true
@@ -13,17 +20,17 @@ sleep 1
 # Create new tmux session with 3 windows
 echo "Creating tmux session: $SESSION_NAME"
 
-# Window 0: Minecraft Server
+# Window 0: Minecraft Server (with file monitoring)
 tmux new-session -d -s $SESSION_NAME -n "minecraft" -c "$REPO_DIR"
-tmux send-keys -t $SESSION_NAME:minecraft "while true; do echo '=== Starting Minecraft Server ===' && java -Xmx1024M -Xms512M -jar server.jar nogui 2>&1 | tee -a minecraft-server.log; echo '!!! Minecraft crashed, restarting in 5s...' && sleep 5; done" Enter
+tmux send-keys -t $SESSION_NAME:minecraft "bash $REPO_DIR/scripts/restart-minecraft.sh" Enter
 
-# Window 1: Bridge Server
-tmux new-window -t $SESSION_NAME -n "bridge" -c "$REPO_DIR/bridge"
-tmux send-keys -t $SESSION_NAME:bridge "while true; do echo '=== Starting Bridge Server ===' && npm run dev 2>&1 | tee -a ../bridge-server.log; echo '!!! Bridge crashed, restarting in 5s...' && sleep 5; done" Enter
+# Window 1: Bridge Server (with file monitoring)
+tmux new-window -t $SESSION_NAME -n "bridge" -c "$REPO_DIR"
+tmux send-keys -t $SESSION_NAME:bridge "bash $REPO_DIR/scripts/restart-bridge.sh" Enter
 
-# Window 2: Rendering Client
-tmux new-window -t $SESSION_NAME -n "client" -c "$REPO_DIR/rendering-client"
-tmux send-keys -t $SESSION_NAME:client "while true; do echo '=== Starting Rendering Client ===' && npm run dev 2>&1 | tee -a ../rendering-client.log; echo '!!! Client crashed, restarting in 5s...' && sleep 5; done" Enter
+# Window 2: Rendering Client (with file monitoring)
+tmux new-window -t $SESSION_NAME -n "client" -c "$REPO_DIR"
+tmux send-keys -t $SESSION_NAME:client "bash $REPO_DIR/scripts/restart-client.sh" Enter
 
 echo ""
 echo "=========================================="

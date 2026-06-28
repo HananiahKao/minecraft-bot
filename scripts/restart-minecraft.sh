@@ -3,7 +3,7 @@
 # Minecraft Server Auto-Restart Wrapper
 # Only restarts on crashes (config monitoring disabled due to file mutation)
 
-REPO_DIR="/Users/hananiah/Desktop/minecraft-bot"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_FILE="$REPO_DIR/minecraft-server.log"
 
 MC_PID=""
