@@ -1,8 +1,9 @@
 /**
- * WebSocket Bridge Server - Phase 2 & 2.5
- * Runs a Mineflayer bot and bridges chunk data to the rendering client
- *
- * Phase 2.5: Bot walks to camera position (respects server physics)
+ * WebSocket Bridge Server
+ * Puppets a Mineflayer bot from client input — mimics the official Minecraft client:
+ * - Client sends WASD control states + yaw/pitch every tick
+ * - Bridge calls bot.setControlState() + bot.look() (server physics runs)
+ * - Bridge streams back bot's authoritative position + chunk data
  */
 
 import http from 'http';
@@ -31,7 +32,7 @@ const wss = new WebSocketServer({
 let bot = null;
 let connectedClients = [];
 let botReady = false;
-let lastCameraPosition = null;
+let positionBroadcastInterval = null;
 
 function initBot() {
   console.log(`🤖 Connecting to ${MINECRAFT_HOST}:${MINECRAFT_PORT} as "${BOT_USERNAME}"...`);
@@ -55,36 +56,36 @@ function initBot() {
       dimension: bot.game.dimension
     });
 
-    // Request chunks around spawn
-    console.log(`📦 Requesting initial chunks...`);
+    // Send already-loaded chunks around spawn
     requestChunksAround(bot.entity.position);
 
-    // Continuous chunk maintenance
-    const maintainChunksInterval = setInterval(() => {
+    // Stream bot position to clients every tick (50ms)
+    if (positionBroadcastInterval) clearInterval(positionBroadcastInterval);
+    positionBroadcastInterval = setInterval(() => {
       if (connectedClients.length > 0 && bot && bot.entity) {
-        const targetPos = lastCameraPosition || bot.entity.position;
-        if (lastCameraPosition) {
-          requestChunksAround(bot.entity.position);
-        }
+        broadcastMessage({
+          type: 'bot_position',
+          position: bot.entity.position.toArray()
+        });
       }
-    }, 2000);
+    }, 50);
   });
 
   bot.on('chunkColumnLoad', (chunk) => {
     if (!connectedClients.length) return;
     try {
       const chunkData = bot.world.getColumn(chunk.x, chunk.z);
-      if (chunkData) {
-        broadcastChunk(chunk.x, chunk.z, chunkData);
-      }
+      if (chunkData) broadcastChunk(chunk.x, chunk.z, chunkData);
     } catch (e) {
       // Chunk not ready yet
     }
   });
 
   bot.on('death', () => {
-    console.log('💀 Bot died! Respawning at spawn...');
+    console.log('💀 Bot died! Respawning...');
     botReady = false;
+    // Stop all movement on death
+    stopAllControls();
     setTimeout(() => {
       try {
         bot.respawn();
@@ -99,15 +100,16 @@ function initBot() {
   bot.on('error', (err) => {
     console.error('❌ Bot error:', err.message);
     botReady = false;
-    broadcastMessage({
-      type: 'error',
-      message: err.message || 'Unknown error'
-    });
+    broadcastMessage({ type: 'error', message: err.message || 'Unknown error' });
   });
 
   bot.on('end', (reason) => {
     console.log('Bot disconnected:', reason);
     botReady = false;
+    if (positionBroadcastInterval) {
+      clearInterval(positionBroadcastInterval);
+      positionBroadcastInterval = null;
+    }
     setTimeout(() => {
       console.log('Attempting to reconnect...');
       initBot();
@@ -115,16 +117,34 @@ function initBot() {
   });
 }
 
+function stopAllControls() {
+  if (!bot) return;
+  ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'].forEach(c => {
+    try { bot.setControlState(c, false); } catch (e) {}
+  });
+}
+
+function requestChunksAround(position) {
+  if (!bot || !bot.world) return;
+  const chunkX = Math.floor(position.x / 16);
+  const chunkZ = Math.floor(position.z / 16);
+  const radius = 4;
+  for (let x = chunkX - radius; x <= chunkX + radius; x++) {
+    for (let z = chunkZ - radius; z <= chunkZ + radius; z++) {
+      try {
+        const chunkData = bot.world.getColumn(x, z);
+        if (chunkData) broadcastChunk(x, z, chunkData);
+      } catch (e) {}
+    }
+  }
+}
+
 function broadcastMessage(message) {
   try {
     const data = JSON.stringify(message);
     connectedClients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN = 1
-        try {
-          client.send(data);
-        } catch (e) {
-          // Client send failed
-        }
+      if (client.readyState === 1) {
+        try { client.send(data); } catch (e) {}
       }
     });
   } catch (e) {
@@ -144,52 +164,19 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
           try {
             const block = chunkData.getBlock({ x, y, z });
             if (block && block.name && block.name !== 'air') {
-              blocks.push({
-                x, y, z,
-                name: String(block.name)
-              });
+              blocks.push({ x, y, z, name: String(block.name) });
             }
-          } catch (e) {
-            // Block unreadable
-          }
+          } catch (e) {}
         }
       }
     }
 
     if (blocks.length > 0) {
       console.log(`📦 Chunk ${chunkX},${chunkZ}: ${blocks.length} blocks`);
-      broadcastMessage({
-        type: 'chunk_data',
-        x: chunkX,
-        z: chunkZ,
-        blocks: blocks
-      });
+      broadcastMessage({ type: 'chunk_data', x: chunkX, z: chunkZ, blocks });
     }
   } catch (e) {
     console.error(`Failed to process chunk ${chunkX},${chunkZ}:`, e.message);
-  }
-}
-
-function requestChunksAround(position) {
-  if (!bot || !bot.world) return;
-
-  const chunkX = Math.floor(position.x / 16);
-  const chunkZ = Math.floor(position.z / 16);
-  const radius = 4;
-
-  console.log(`📡 Requesting chunks around (${chunkX}, ${chunkZ})...`);
-
-  for (let x = chunkX - radius; x <= chunkX + radius; x++) {
-    for (let z = chunkZ - radius; z <= chunkZ + radius; z++) {
-      try {
-        const chunkData = bot.world.getColumn(x, z);
-        if (chunkData) {
-          broadcastChunk(x, z, chunkData);
-        }
-      } catch (e) {
-        // Chunk not loaded yet
-      }
-    }
   }
 }
 
@@ -198,20 +185,12 @@ wss.on('connection', (ws) => {
   connectedClients.push(ws);
 
   try {
-    ws.send(JSON.stringify({
-      type: 'init',
-      botReady,
-      position: botReady ? bot.entity.position.toArray() : [0, 70, 0],
-      dimension: botReady ? bot.game.dimension : 'minecraft:overworld'
-    }));
-
     if (botReady) {
       ws.send(JSON.stringify({
         type: 'bot_ready',
         position: bot.entity.position.toArray(),
         dimension: bot.game.dimension
       }));
-      console.log(`📦 Re-requesting chunks for newly connected client...`);
       requestChunksAround(bot.entity.position);
     }
   } catch (e) {
@@ -222,49 +201,21 @@ wss.on('connection', (ws) => {
     try {
       const message = JSON.parse(data);
 
-      switch (message.type) {
-        case 'request_chunks':
-          console.log(`[MOVE] Received position request: (${message.position[0].toFixed(1)}, ${message.position[1].toFixed(1)}, ${message.position[2].toFixed(1)})`);
-          if (botReady && bot && bot.entity && message.position) {
-            const cameraPos = {
-              x: message.position[0],
-              y: message.position[1],
-              z: message.position[2]
-            };
+      if (message.type === 'player_input' && botReady && bot && bot.entity) {
+        const { controls, yaw, pitch } = message;
 
-            const currentPos = bot.entity.position;
-            const dx = cameraPos.x - currentPos.x;
-            const dz = cameraPos.z - currentPos.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-
-            console.log(`[MOVE] Distance to target: ${dist.toFixed(1)} blocks (current: ${currentPos.toString()}, target: ${cameraPos.x.toFixed(1)},${cameraPos.z.toFixed(1)})`);
-
-            if (cameraPos.y >= 0 && cameraPos.y <= 256 && dist <= 1000) {
-              lastCameraPosition = cameraPos;
-
-              // Teleport bot to camera position for testing chunk streaming
-              if (dist > 0.5) {
-                console.log(`[MOVE] Teleporting bot to target (distance: ${dist.toFixed(1)})`);
-                try {
-                  bot.chat(`/tp ${cameraPos.x.toFixed(1)} ${cameraPos.y.toFixed(1)} ${cameraPos.z.toFixed(1)}`);
-                  console.log(`[MOVE] Teleported to (${cameraPos.x.toFixed(1)}, ${cameraPos.y.toFixed(1)}, ${cameraPos.z.toFixed(1)})`);
-                } catch (e) {
-                  console.warn('Teleport failed:', e.message);
-                }
-              } else {
-                console.log(`[MOVE] Already at target (distance: ${dist.toFixed(1)} <= 0.5)`);
-              }
-
-              // Request chunks only if chunk changed
-              const lastChunkPos = lastCameraPosition || currentPos;
-              const chunkMoveX = Math.abs(Math.floor(cameraPos.x / 16) - Math.floor(lastChunkPos.x / 16));
-              const chunkMoveZ = Math.abs(Math.floor(cameraPos.z / 16) - Math.floor(lastChunkPos.z / 16));
-              if (Math.max(chunkMoveX, chunkMoveZ) > 0) {
-                requestChunksAround(cameraPos);
-              }
-            }
+        // Apply control states — server physics handles the rest
+        const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
+        for (const control of valid) {
+          if (control in controls) {
+            bot.setControlState(control, !!controls[control]);
           }
-          break;
+        }
+
+        // Apply look direction
+        if (typeof yaw === 'number' && typeof pitch === 'number') {
+          bot.look(yaw, pitch, true);
+        }
       }
     } catch (e) {
       console.error('Error handling message:', e.message);
@@ -272,8 +223,10 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', (code, reason) => {
-    console.log(`🔌 Client disconnected (code: ${code}, reason: ${reason || 'none'})`);
+    console.log(`🔌 Client disconnected (code: ${code})`);
     connectedClients = connectedClients.filter(c => c !== ws);
+    // Stop bot movement when no clients are connected
+    if (connectedClients.length === 0) stopAllControls();
   });
 
   ws.on('error', (error) => {
@@ -289,6 +242,7 @@ server.listen(BRIDGE_PORT, '0.0.0.0', () => {
 
 process.on('SIGINT', () => {
   console.log('\n⏹️  Shutting down...');
+  stopAllControls();
   if (bot) bot.end();
   wss.clients.forEach(client => client.close());
   server.close();

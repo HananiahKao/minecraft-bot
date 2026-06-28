@@ -1,5 +1,6 @@
 /**
- * Input handling for camera movement and mouse look
+ * Input handling - captures WASD/mouse and exposes state for the bridge
+ * Camera rotation is applied locally (responsive), controls are sent to server
  */
 
 import * as THREE from 'three';
@@ -7,85 +8,81 @@ import * as THREE from 'three';
 export class InputHandler {
   constructor(camera) {
     this.camera = camera;
-    this.keys = {};
     this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
     this.pi2 = Math.PI / 2;
-    this.moveVector = new THREE.Vector3();
-    this.moveSpeed = 0.5;
+    this.isPointerLocked = false;
+
+    this.controls = {
+      forward: false,
+      back: false,
+      left: false,
+      right: false,
+      jump: false,
+      sneak: false,
+      sprint: false,
+    };
 
     this.registerEventListeners();
   }
 
   registerEventListeners() {
+    const keyMap = {
+      'w': 'forward', 'arrowup': 'forward',
+      's': 'back',    'arrowdown': 'back',
+      'a': 'left',    'arrowleft': 'left',
+      'd': 'right',   'arrowright': 'right',
+      ' ': 'jump',
+      'shift': 'sneak',
+      'control': 'sprint',
+    };
+
     document.addEventListener('keydown', (e) => {
-      this.keys[e.key.toLowerCase()] = true;
-      if (['w', 'a', 's', 'd', ' '].includes(e.key.toLowerCase())) {
+      const control = keyMap[e.key.toLowerCase()];
+      if (control) {
+        this.controls[control] = true;
         e.preventDefault();
       }
     });
 
     document.addEventListener('keyup', (e) => {
-      this.keys[e.key.toLowerCase()] = false;
+      const control = keyMap[e.key.toLowerCase()];
+      if (control) this.controls[control] = false;
     });
 
     document.addEventListener('mousemove', (e) => {
-      this.onMouseMove(e);
+      if (!this.isPointerLocked) return;
+      const movementX = e.movementX || e.mozMovementX || 0;
+      const movementY = e.movementY || e.mozMovementY || 0;
+      this.euler.setFromQuaternion(this.camera.quaternion);
+      this.euler.y -= movementX * 0.003;
+      this.euler.x -= movementY * 0.003;
+      this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
+      this.camera.quaternion.setFromEuler(this.euler);
     });
 
     document.addEventListener('click', () => {
-      document.body.requestPointerLock =
-        document.body.requestPointerLock || document.body.mozRequestPointerLock;
       document.body.requestPointerLock();
     });
 
     document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === document.body) {
-        this.isPointerLocked = true;
-      } else {
-        this.isPointerLocked = false;
-      }
+      this.isPointerLocked = document.pointerLockElement === document.body;
     });
   }
 
-  onMouseMove(e) {
-    if (!this.isPointerLocked) return;
-
-    const movementX = e.movementX || e.mozMovementX || 0;
-    const movementY = e.movementY || e.mozMovementY || 0;
-
-    this.euler.setFromQuaternion(this.camera.quaternion);
-    this.euler.y -= movementX * 0.003;
-    this.euler.x -= movementY * 0.003;
-
-    this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
-    this.camera.quaternion.setFromEuler(this.euler);
+  getControls() {
+    return this.controls;
   }
 
-  update() {
-    this.moveVector.set(0, 0, 0);
+  // Three.js euler.y → Minecraft yaw: mineflayer yaw=0=north, clockwise positive
+  // Three.js euler.y is counterclockwise, so negate it
+  getMCYaw() {
+    this.euler.setFromQuaternion(this.camera.quaternion);
+    return -this.euler.y;
+  }
 
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-
-    if (this.keys['w'] || this.keys['arrowup']) {
-      this.moveVector.addScaledVector(forward, this.moveSpeed);
-    }
-    if (this.keys['s'] || this.keys['arrowdown']) {
-      this.moveVector.addScaledVector(forward, -this.moveSpeed);
-    }
-    if (this.keys['d'] || this.keys['arrowright']) {
-      this.moveVector.addScaledVector(right, this.moveSpeed);
-    }
-    if (this.keys['a'] || this.keys['arrowleft']) {
-      this.moveVector.addScaledVector(right, -this.moveSpeed);
-    }
-    if (this.keys[' ']) {
-      this.moveVector.y += this.moveSpeed;
-    }
-    if (this.keys['shift']) {
-      this.moveVector.y -= this.moveSpeed;
-    }
-
-    this.camera.position.add(this.moveVector);
+  // Three.js: negative euler.x = looking down. Minecraft: positive pitch = looking down
+  getMCPitch() {
+    this.euler.setFromQuaternion(this.camera.quaternion);
+    return -this.euler.x;
   }
 }

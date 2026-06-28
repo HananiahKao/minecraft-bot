@@ -3,11 +3,12 @@
  */
 
 export class BridgeConnection {
-  constructor(onChunk, onBotReady, onError) {
+  constructor(onChunk, onBotReady, onBotPosition, onError) {
     this.ws = null;
     this.isConnected = false;
     this.onChunk = onChunk;
     this.onBotReady = onBotReady;
+    this.onBotPosition = onBotPosition;
     this.onError = onError;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
@@ -68,21 +69,16 @@ export class BridgeConnection {
     switch (message.type) {
       case 'bot_ready':
         console.log('🤖 Bot ready at', message.position);
-        if (this.onBotReady) {
-          this.onBotReady({
-            position: message.position,
-            dimension: message.dimension
-          });
-        }
+        if (this.onBotReady) this.onBotReady(message.position);
+        break;
+
+      case 'bot_position':
+        if (this.onBotPosition) this.onBotPosition(message.position);
         break;
 
       case 'chunk_data':
         if (this.onChunk) {
-          this.onChunk({
-            x: message.x,
-            z: message.z,
-            blocks: message.blocks
-          });
+          this.onChunk({ x: message.x, z: message.z, blocks: message.blocks });
         }
         break;
 
@@ -103,18 +99,8 @@ export class BridgeConnection {
     }
   }
 
-  requestChunks(position) {
-    const msg = {
-      type: 'request_chunks',
-      position: [position.x, position.y, position.z]
-    };
-    console.log(`📤 Requesting chunks:`, {
-      x: position.x.toFixed(1),
-      y: position.y.toFixed(1),
-      z: position.z.toFixed(1),
-      connected: this.isConnected
-    });
-    this.send(msg);
+  sendPlayerInput(controls, yaw, pitch) {
+    this.send({ type: 'player_input', controls, yaw, pitch });
   }
 
   close() {

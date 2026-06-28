@@ -1,9 +1,9 @@
 /**
- * Main rendering client - Phase 2.5
- * Client prediction (instant camera) + Server validation (bot walks)
+ * Main rendering client - Phase 3
+ * Camera follows bot position (server-authoritative)
+ * WASD/mouse sent as control states to bridge → server physics runs
  */
 
-import * as THREE from 'three';
 import { MinecraftRenderer } from './renderer.js';
 import { InputHandler } from './input.js';
 import { BridgeConnection } from './connection.js';
@@ -11,12 +11,9 @@ import { BridgeConnection } from './connection.js';
 let renderer = null;
 let inputHandler = null;
 let connection = null;
-let lastChunkRequestTime = 0;
-let botReadyPosition = null;
-let chunksLoadedCount = 0;
 let totalChunksLoaded = 0;
-let cameraSyncedWithBot = false;
-const CHUNKS_BEFORE_CAMERA_MOVE = 25;
+let lastInputSendTime = 0;
+const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 
 function init() {
   const container = document.getElementById('canvas');
@@ -26,6 +23,7 @@ function init() {
   connection = new BridgeConnection(
     onChunkReceived,
     onBotReady,
+    onBotPosition,
     onError
   );
 
@@ -37,30 +35,22 @@ function init() {
   startUpdateLoop();
 }
 
-function onBotReady(data) {
-  console.log('🤖 Bot ready:', data.position);
-  botReadyPosition = {
-    x: data.position[0],
-    y: data.position[1],
-    z: data.position[2]
-  };
-  chunksLoadedCount = 0;
-  cameraSyncedWithBot = false;
-  updateStatus('Waiting for chunks...');
+function onBotReady(position) {
+  console.log('🤖 Bot ready at', position);
+  renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
+  updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
+}
+
+function onBotPosition(position) {
+  // Camera tracks bot — server is authoritative for position
+  renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
 }
 
 function onChunkReceived(chunkData) {
   try {
-    const chunkAdded = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
-    if (chunkAdded) {
+    const added = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
+    if (added) {
       totalChunksLoaded++;
-      console.log(`📦 Chunk ${chunkData.x},${chunkData.z} loaded (total: ${totalChunksLoaded})`);
-      if (!cameraSyncedWithBot && botReadyPosition) {
-        chunksLoadedCount++;
-        updateStatus(`Loading chunks (${chunksLoadedCount}/${CHUNKS_BEFORE_CAMERA_MOVE})`);
-      }
-    }
-    if (cameraSyncedWithBot) {
       updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
     }
   } catch (e) {
@@ -76,31 +66,17 @@ function onError(error) {
 function startUpdateLoop() {
   const loop = () => {
     requestAnimationFrame(loop);
-
-    inputHandler.update();
     renderer.render();
 
-    // Phase 2.5: Sync camera to bot position, then send position updates
-    if (botReadyPosition && chunksLoadedCount >= CHUNKS_BEFORE_CAMERA_MOVE && !cameraSyncedWithBot) {
-      renderer.setCameraPosition(
-        botReadyPosition.x,
-        botReadyPosition.y + 1.6,
-        botReadyPosition.z
-      );
-      updateStatus('🎮 Playing | Chunks: ' + totalChunksLoaded);
-      console.log(`🎥 Camera teleported to bot at (${botReadyPosition.x.toFixed(1)}, ${botReadyPosition.y.toFixed(1)}, ${botReadyPosition.z.toFixed(1)})`);
-      botReadyPosition = null;
-      cameraSyncedWithBot = true;
-    }
-
-    // Send camera position periodically (only after sync)
+    // Send player input at 20Hz (one MC tick)
     const now = Date.now();
-    if (cameraSyncedWithBot && now - lastChunkRequestTime > 100) {
-      const pos = renderer.getCameraPosition();
-      if (connection && connection.isConnected) {
-        connection.requestChunks(pos);
-        lastChunkRequestTime = now;
-      }
+    if (connection && connection.isConnected && now - lastInputSendTime >= INPUT_SEND_INTERVAL) {
+      connection.sendPlayerInput(
+        inputHandler.getControls(),
+        inputHandler.getMCYaw(),
+        inputHandler.getMCPitch()
+      );
+      lastInputSendTime = now;
     }
   };
 
@@ -109,9 +85,7 @@ function startUpdateLoop() {
 
 function updateStatus(message) {
   const statusEl = document.getElementById('status');
-  if (statusEl) {
-    statusEl.textContent = message;
-  }
+  if (statusEl) statusEl.textContent = message;
 }
 
 window.addEventListener('DOMContentLoaded', init);
