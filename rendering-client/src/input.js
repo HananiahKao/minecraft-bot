@@ -66,18 +66,28 @@ export class InputHandler {
 
     document.addEventListener('pointerlockchange', () => {
       this.isPointerLocked = document.pointerLockElement === document.body;
+      // Clear all controls on any pointer lock change to prevent stuck keys
+      if (!this.isPointerLocked) this.clearControls();
     });
+
+    window.addEventListener('blur', () => this.clearControls());
+  }
+
+  clearControls() {
+    Object.keys(this.controls).forEach(k => this.controls[k] = false);
   }
 
   getControls() {
     return this.controls;
   }
 
-  // Three.js euler.y → Minecraft yaw: mineflayer yaw=0=north, clockwise positive
-  // Three.js euler.y is counterclockwise, so negate it
+  // Three.js euler.y → Minecraft yaw (standard MC: yaw=0=south, yaw=π=north)
+  // Camera at euler.y faces (-sin(euler.y), 0, -cos(euler.y))
+  // Mineflayer front at yaw faces (-sin(yaw), 0, cos(yaw))
+  // Matching both: yaw = π - euler.y
   getMCYaw() {
     this.euler.setFromQuaternion(this.camera.quaternion);
-    return -this.euler.y;
+    return Math.PI - this.euler.y;
   }
 
   // Three.js: negative euler.x = looking down. Minecraft: positive pitch = looking down
