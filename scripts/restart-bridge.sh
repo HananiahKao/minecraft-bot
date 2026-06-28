@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Bridge Server Auto-Restart Wrapper
-# Monitors for file changes and restarts gracefully
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRIDGE_DIR="$REPO_DIR/bridge"
@@ -12,6 +11,16 @@ LAST_HASH=""
 
 echo "[STARTUP] Bridge Server Wrapper Started"
 
+kill_port() {
+    local pids
+    pids=$(lsof -ti :8080 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "[$(date '+%H:%M:%S')] [CLEAN] Killing stale processes on port 8080: $pids"
+        echo "$pids" | xargs kill -9 2>/dev/null
+        sleep 0.5
+    fi
+}
+
 restart_bridge() {
     local is_restart=$1
     local label="STARTUP"
@@ -21,6 +30,13 @@ restart_bridge() {
     echo "=========================================="
     echo "[$(date '+%H:%M:%S')] [$label] Starting Bridge Server..."
     echo "=========================================="
+
+    if [ -n "$BRIDGE_PID" ] && kill -0 "$BRIDGE_PID" 2>/dev/null; then
+        echo "[$(date '+%H:%M:%S')] [STOP] Stopping Bridge (PID: $BRIDGE_PID)..."
+        kill "$BRIDGE_PID" 2>/dev/null
+        sleep 1
+    fi
+    kill_port
 
     cd "$BRIDGE_DIR"
     npm run dev 2>&1 | tee -a "$LOG_FILE" &
@@ -34,32 +50,20 @@ monitor_files() {
     while true; do
         sleep 2
 
-        # Check if bridge crashed
-        if [ -n "$BRIDGE_PID" ] && ! kill -0 $BRIDGE_PID 2>/dev/null; then
+        if [ -n "$BRIDGE_PID" ] && ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
             echo "[$(date '+%H:%M:%S')] [CRASH] Bridge died, restarting..."
             restart_bridge true
         fi
 
-        # Check if file changed
         if [ -f "$file_to_watch" ]; then
             CURRENT_HASH=$(md5 -q "$file_to_watch" 2>/dev/null || echo "")
 
-            # First run: initialize hash (no restart)
             if [ -z "$LAST_HASH" ]; then
                 LAST_HASH="$CURRENT_HASH"
                 echo "[$(date '+%H:%M:%S')] [INIT] Initialized hash: ${LAST_HASH:0:8}..."
-            # File actually changed: restart
             elif [ -n "$CURRENT_HASH" ] && [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
                 echo "[$(date '+%H:%M:%S')] [CHANGE] server-bridge.js modified, restarting..."
                 LAST_HASH="$CURRENT_HASH"
-
-                # Graceful stop
-                if [ -n "$BRIDGE_PID" ] && kill -0 $BRIDGE_PID 2>/dev/null; then
-                    echo "[$(date '+%H:%M:%S')] [STOP] Stopping Bridge (PID: $BRIDGE_PID)..."
-                    kill $BRIDGE_PID 2>/dev/null
-                    sleep 1
-                fi
-
                 restart_bridge true
             fi
         fi

@@ -10,6 +10,16 @@ MC_PID=""
 
 echo "[STARTUP] Minecraft Server Wrapper Started"
 
+kill_port() {
+    local pids
+    pids=$(lsof -ti :25565 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "[$(date '+%H:%M:%S')] [CLEAN] Killing stale processes on port 25565: $pids"
+        echo "$pids" | xargs kill -9 2>/dev/null
+        sleep 0.5
+    fi
+}
+
 restart_minecraft() {
     local is_restart=$1
     local label="STARTUP"
@@ -19,6 +29,13 @@ restart_minecraft() {
     echo "=========================================="
     echo "[$(date '+%H:%M:%S')] [$label] Starting Minecraft Server..."
     echo "=========================================="
+
+    if [ -n "$MC_PID" ] && kill -0 "$MC_PID" 2>/dev/null; then
+        echo "[$(date '+%H:%M:%S')] [STOP] Stopping Minecraft (PID: $MC_PID)..."
+        kill "$MC_PID" 2>/dev/null
+        sleep 1
+    fi
+    kill_port
 
     # Clean up old session lock if it exists
     rm -f "$REPO_DIR/world/session.lock" 2>/dev/null || true
