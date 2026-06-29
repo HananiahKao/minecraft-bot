@@ -136,11 +136,9 @@ function startUpdateLoop() {
 
     const _frameTotal = performance.now() - _frameStart;
     _frameCount++;
-    if (_frameTotal > 16) {
+    if (_frameTotal > 33) {  // log anything below 30fps
       _frameBudgetViolations++;
-      if (_frameCount % 10 === 0 || _frameTotal > 50) {
-        console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
-      }
+      console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
