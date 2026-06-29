@@ -1,13 +1,8 @@
 /**
  * Three.js renderer for Minecraft chunks
  *
- * Geometry strategy: chunk vertex data is accumulated in chunkData (Float32Arrays).
- * During loading, temporary individual meshes show terrain progressively.
- * When flushMerge() is called (queues idle), all tempMeshes are replaced by a single
- * merged worldMesh — reducing GPU draw calls from N to 1.
- *
- * Face culling: FrontSide with explicit CCW winding (from outside the block).
- * Halves GPU fragment work vs DoubleSide.
+ * Each chunk is its own Mesh. FrontSide culling with explicit CCW winding
+ * halves GPU fragment work vs DoubleSide.
  */
 
 import * as THREE from 'three';
@@ -109,14 +104,10 @@ function getBlockRGB(blockName) {
   return rgb;
 }
 
-// Shared material — one material for the entire merged world mesh
-const WORLD_MATERIAL = new THREE.MeshLambertMaterial({
+const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
   vertexColors: true,
-  side: THREE.FrontSide, // CCW winding enforced below; halves GPU fragment work
+  side: THREE.FrontSide,
 });
-
-// Temporary material for individual meshes shown during loading
-const TEMP_MATERIAL = WORLD_MATERIAL;
 
 function buildChunkArrays(chunkX, chunkZ, blocks) {
   const presence = new Uint8Array(16 * 256 * 16);
@@ -223,13 +214,7 @@ export class MinecraftRenderer {
 
     this.setupLighting();
 
-    // Per-chunk vertex data (always maintained for merge)
-    this.chunkData = new Map();   // key → {positions, normals, colors} Float32Arrays
-    // Track loaded chunk keys (for duplicate check and count)
-    this.chunkMeshes = new Map(); // key → THREE.Mesh (temp individual mesh, null after merge)
-
-    this.worldMesh = null;   // single merged mesh (replaces all tempMeshes when flushed)
-    this.worldDirty = false; // needs flushMerge()
+    this.chunkMeshes = new Map(); // key → THREE.Mesh
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
@@ -249,13 +234,9 @@ export class MinecraftRenderer {
     const data = buildChunkArrays(chunkX, chunkZ, blocks);
     if (!data) return false;
 
-    this.chunkData.set(key, data);
-
-    // Temporary individual mesh — visible during loading, removed on flushMerge
-    const mesh = new THREE.Mesh(makeGeometry(data), TEMP_MATERIAL);
+    const mesh = new THREE.Mesh(makeGeometry(data), CHUNK_MATERIAL);
     this.scene.add(mesh);
     this.chunkMeshes.set(key, mesh);
-    this.worldDirty = true;
     return true;
   }
 
@@ -267,58 +248,6 @@ export class MinecraftRenderer {
       mesh.geometry.dispose();
     }
     this.chunkMeshes.delete(key);
-    this.chunkData.delete(key);
-    this.worldDirty = true;
-  }
-
-  // Call when chunk queues are idle — merges all chunk geometries into one draw call.
-  flushMerge() {
-    if (!this.worldDirty || this.chunkData.size === 0) return;
-    this.worldDirty = false;
-
-    // Measure total vertex count
-    let totalFloats = 0;
-    for (const d of this.chunkData.values()) totalFloats += d.positions.length;
-
-    const positions = new Float32Array(totalFloats);
-    const normals   = new Float32Array(totalFloats);
-    const colors    = new Float32Array(totalFloats);
-
-    let offset = 0;
-    for (const d of this.chunkData.values()) {
-      positions.set(d.positions, offset);
-      normals.set(d.normals,     offset);
-      colors.set(d.colors,       offset);
-      offset += d.positions.length;
-    }
-
-    // Remove all temporary individual meshes
-    for (const mesh of this.chunkMeshes.values()) {
-      if (mesh) {
-        this.scene.remove(mesh);
-        mesh.geometry.dispose();
-      }
-    }
-    // Replace map values with null (keys kept for duplicate detection)
-    for (const key of this.chunkMeshes.keys()) {
-      this.chunkMeshes.set(key, null);
-    }
-
-    // Remove old world mesh
-    if (this.worldMesh) {
-      this.scene.remove(this.worldMesh);
-      this.worldMesh.geometry.dispose();
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
-    geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
-
-    this.worldMesh = new THREE.Mesh(geo, WORLD_MATERIAL);
-    this.scene.add(this.worldMesh);
-
-    console.log(`[MERGE] ${this.chunkData.size} chunks → 1 draw call (${(totalFloats * 4 / 1024).toFixed(0)} KB GPU)`);
   }
 
   setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }

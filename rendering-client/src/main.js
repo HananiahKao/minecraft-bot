@@ -120,13 +120,6 @@ function startUpdateLoop() {
     }
     const _dt_add = performance.now() - _t_add;
 
-    // When all queues are idle, merge all chunk geometries into one draw call
-    const _t_merge = performance.now();
-    if (rawChunkQueue.length === 0 && chunkQueue.length === 0 && unloadQueue.length === 0) {
-      renderer.flushMerge();
-    }
-    const _dt_merge = performance.now() - _t_merge;
-
     const _t_render = performance.now();
     renderer.render();
     const _dt_render = performance.now() - _t_render;
@@ -146,7 +139,7 @@ function startUpdateLoop() {
     if (_frameTotal > 16) {
       _frameBudgetViolations++;
       if (_frameCount % 10 === 0 || _frameTotal > 50) {
-        console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} merge=${_dt_merge.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+        console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
       }
     }
 
