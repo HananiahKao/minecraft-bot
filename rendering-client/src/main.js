@@ -14,6 +14,9 @@ let connection = null;
 let totalChunksLoaded = 0;
 let lastInputSendTime = 0;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
+const CHUNK_RENDER_RADIUS = 8;  // keep chunks within this many chunks of bot
+let lastBotChunkX = null;
+let lastBotChunkZ = null;
 
 function init() {
   const container = document.getElementById('canvas');
@@ -42,8 +45,26 @@ function onBotReady(position) {
 }
 
 function onBotPosition(position) {
-  // Camera tracks bot — server is authoritative for position
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
+
+  const cx = Math.floor(position[0] / 16);
+  const cz = Math.floor(position[2] / 16);
+  if (cx !== lastBotChunkX || cz !== lastBotChunkZ) {
+    lastBotChunkX = cx;
+    lastBotChunkZ = cz;
+    unloadDistantChunks(cx, cz);
+  }
+}
+
+function unloadDistantChunks(botChunkX, botChunkZ) {
+  for (const key of renderer.chunkMeshes.keys()) {
+    const [kx, kz] = key.split(',').map(Number);
+    if (Math.abs(kx - botChunkX) > CHUNK_RENDER_RADIUS || Math.abs(kz - botChunkZ) > CHUNK_RENDER_RADIUS) {
+      renderer.removeChunk(kx, kz);
+      totalChunksLoaded--;
+    }
+  }
+  updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
 }
 
 function onChunkReceived(chunkData) {
