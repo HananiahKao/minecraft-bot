@@ -208,7 +208,7 @@ export class MinecraftRenderer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
+    this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.shadowMap.enabled = false;
     container.appendChild(this.renderer.domElement);
 
