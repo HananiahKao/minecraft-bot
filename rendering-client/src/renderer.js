@@ -110,10 +110,21 @@ const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
 });
 
 function buildChunkArrays(chunkX, chunkZ, blocks) {
-  const presence = new Uint8Array(16 * 256 * 16);
-  for (const { x, y, z } of blocks) {
-    presence[x + z * 16 + y * 256] = 1;
+  if (!blocks || blocks.length === 0) return null;
+
+  // Build compact block-type grid: index = x + z*16 + y*256, value = type id (0=air)
+  const nameList = [''];
+  const nameIndex = new Map([['', 0]]);
+  const grid = new Uint16Array(16 * 256 * 16);
+  let yMin = 255, yMax = 0;
+  for (const { x, y, z, name } of blocks) {
+    let id = nameIndex.get(name);
+    if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
+    grid[x + z * 16 + y * 256] = id;
+    if (y < yMin) yMin = y;
+    if (y > yMax) yMax = y;
   }
+  const yRange = yMax - yMin + 1;
 
   const positions = [];
   const normals = [];
@@ -121,63 +132,139 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
   const bxBase = chunkX * 16;
   const bzBase = chunkZ * 16;
 
-  for (const { x, y, z, name } of blocks) {
-    const [r, g, b] = getBlockRGB(name);
-    const bx = bxBase + x;
-    const by = y;
-    const bz = bzBase + z;
+  // Pre-allocated mask/used buffers — reused across all slices
+  const mask = new Uint16Array(16 * 256);
+  const used = new Uint8Array(16 * 256);
 
-    // All faces wound CCW when viewed from OUTSIDE the block (FrontSide culls backfaces).
-    // Coordinate system: X right, Y up, Z toward viewer (+Z = south in Three.js/Minecraft).
+  // Greedy meshing: find maximal same-type rectangles in the 2D mask (W×H).
+  // All faces wound CCW from outside — winding verified per-face below.
+  function greedy(W, H, cb) {
+    used.fill(0, 0, W * H);
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        const base = i + j * W;
+        if (used[base] || mask[base] === 0) continue;
+        const t = mask[base];
+        let w = 1;
+        while (i + w < W && !used[i + w + j * W] && mask[i + w + j * W] === t) w++;
+        let h = 1;
+        scan: while (j + h < H) {
+          for (let di = 0; di < w; di++) {
+            const c = i + di + (j + h) * W;
+            if (used[c] || mask[c] !== t) break scan;
+          }
+          h++;
+        }
+        for (let dj = 0; dj < h; dj++)
+          for (let di = 0; di < w; di++)
+            used[i + di + (j + dj) * W] = 1;
+        cb(i, j, w, h, t);
+      }
+    }
+  }
 
-    // Top +Y  (viewed from above: CCW = A(left-far), B(right-far), C(left-near), D(right-near))
-    if (y === 255 || !presence[x + z * 16 + (y + 1) * 256]) {
-      positions.push(
-        bx,   by+1, bz+1,   bx+1, by+1, bz,   bx,   by+1, bz,   // tri 1
-        bx,   by+1, bz+1,   bx+1, by+1, bz+1, bx+1, by+1, bz    // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(0, 1, 0); colors.push(r, g, b); }
-    }
-    // Bottom -Y (viewed from below: CCW = opposite winding of top)
-    if (y === 0 || !presence[x + z * 16 + (y - 1) * 256]) {
-      positions.push(
-        bx,   by, bz,   bx+1, by, bz,   bx,   by, bz+1,   // tri 1
-        bx+1, by, bz,   bx+1, by, bz+1, bx,   by, bz+1    // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(0, -1, 0); colors.push(r, g, b); }
-    }
-    // Front +Z (viewed from +Z side: CCW)
-    if (z === 15 || !presence[x + (z + 1) * 16 + y * 256]) {
-      positions.push(
-        bx,   by,   bz+1,   bx+1, by,   bz+1,   bx,   by+1, bz+1,  // tri 1
-        bx+1, by,   bz+1,   bx+1, by+1, bz+1,   bx,   by+1, bz+1   // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(0, 0, 1); colors.push(r, g, b); }
-    }
-    // Back -Z (viewed from -Z side: CCW)
-    if (z === 0 || !presence[x + (z - 1) * 16 + y * 256]) {
-      positions.push(
-        bx+1, by,   bz,   bx,   by,   bz,   bx+1, by+1, bz,  // tri 1
-        bx,   by,   bz,   bx,   by+1, bz,   bx+1, by+1, bz   // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(0, 0, -1); colors.push(r, g, b); }
-    }
-    // Right +X (viewed from +X side: CCW — V1=-Z, V2=+Y → N=+X)
-    if (x === 15 || !presence[(x + 1) + z * 16 + y * 256]) {
-      positions.push(
-        bx+1, by,   bz+1,   bx+1, by,   bz,   bx+1, by+1, bz,   // tri 1
-        bx+1, by,   bz+1,   bx+1, by+1, bz,   bx+1, by+1, bz+1  // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(1, 0, 0); colors.push(r, g, b); }
-    }
-    // Left -X (viewed from -X side: CCW — V1=+Z, V2=+Y → N=-X)
-    if (x === 0 || !presence[(x - 1) + z * 16 + y * 256]) {
-      positions.push(
-        bx, by,   bz,   bx, by,   bz+1,   bx, by+1, bz+1,  // tri 1
-        bx, by,   bz,   bx, by+1, bz+1,   bx, by+1, bz     // tri 2
-      );
-      for (let i = 0; i < 6; i++) { normals.push(-1, 0, 0); colors.push(r, g, b); }
-    }
+  function pushFace(nx, ny, nz, r, g, b,
+    ax, ay, az, bx, by, bz, cx, cy, cz,
+    dx, dy, dz, ex, ey, ez, fx, fy, fz) {
+    positions.push(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, ex,ey,ez, fx,fy,fz);
+    for (let i = 0; i < 6; i++) { normals.push(nx,ny,nz); colors.push(r,g,b); }
+  }
+
+  // TOP +Y: mask in (x=i, z=j), face at y+1
+  for (let y = yMin; y <= yMax; y++) {
+    for (let z = 0; z < 16; z++)
+      for (let x = 0; x < 16; x++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[x + z*16] = (bt && !(y < 255 && grid[x + z*16 + (y+1)*256])) ? bt : 0;
+      }
+    greedy(16, 16, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X0=bxBase+i0, Y=y+1, Z0=bzBase+j0;
+      // CCW from above: tri1=(A,B,C) tri2=(A,D,B) where A=(-z),B=(+x),C=(corner),D=(+x-z)
+      pushFace(0,1,0, r,g,b,
+        X0,Y,Z0+h,  X0+w,Y,Z0,  X0,Y,Z0,
+        X0,Y,Z0+h,  X0+w,Y,Z0+h, X0+w,Y,Z0);
+    });
+  }
+
+  // BOTTOM -Y: mask in (x=i, z=j), face at y
+  for (let y = yMin; y <= yMax; y++) {
+    for (let z = 0; z < 16; z++)
+      for (let x = 0; x < 16; x++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[x + z*16] = (bt && !(y > 0 && grid[x + z*16 + (y-1)*256])) ? bt : 0;
+      }
+    greedy(16, 16, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X0=bxBase+i0, Y=y, Z0=bzBase+j0;
+      pushFace(0,-1,0, r,g,b,
+        X0,Y,Z0,    X0+w,Y,Z0,  X0,Y,Z0+h,
+        X0+w,Y,Z0,  X0+w,Y,Z0+h, X0,Y,Z0+h);
+    });
+  }
+
+  // FRONT +Z: mask in (x=i, y_offset=j), face at bzBase+z+1
+  for (let z = 0; z < 16; z++) {
+    for (let y = yMin; y <= yMax; y++)
+      for (let x = 0; x < 16; x++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[x + (y-yMin)*16] = (bt && !(z < 15 && grid[x + (z+1)*16 + y*256])) ? bt : 0;
+      }
+    greedy(16, yRange, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X0=bxBase+i0, Y0=yMin+j0, Z=bzBase+z+1;
+      pushFace(0,0,1, r,g,b,
+        X0,Y0,Z,    X0+w,Y0,Z,    X0,Y0+h,Z,
+        X0+w,Y0,Z,  X0+w,Y0+h,Z,  X0,Y0+h,Z);
+    });
+  }
+
+  // BACK -Z: mask in (x=i, y_offset=j), face at bzBase+z
+  for (let z = 0; z < 16; z++) {
+    for (let y = yMin; y <= yMax; y++)
+      for (let x = 0; x < 16; x++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[x + (y-yMin)*16] = (bt && !(z > 0 && grid[x + (z-1)*16 + y*256])) ? bt : 0;
+      }
+    greedy(16, yRange, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X0=bxBase+i0, Y0=yMin+j0, Z=bzBase+z;
+      pushFace(0,0,-1, r,g,b,
+        X0+w,Y0,Z,  X0,Y0,Z,    X0+w,Y0+h,Z,
+        X0,Y0,Z,    X0,Y0+h,Z,  X0+w,Y0+h,Z);
+    });
+  }
+
+  // RIGHT +X: mask in (z=i, y_offset=j), face at bxBase+x+1
+  for (let x = 0; x < 16; x++) {
+    for (let y = yMin; y <= yMax; y++)
+      for (let z = 0; z < 16; z++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[z + (y-yMin)*16] = (bt && !(x < 15 && grid[(x+1) + z*16 + y*256])) ? bt : 0;
+      }
+    greedy(16, yRange, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X=bxBase+x+1, Y0=yMin+j0, Z0=bzBase+i0;
+      pushFace(1,0,0, r,g,b,
+        X,Y0,Z0+w,  X,Y0,Z0,    X,Y0+h,Z0,
+        X,Y0,Z0+w,  X,Y0+h,Z0,  X,Y0+h,Z0+w);
+    });
+  }
+
+  // LEFT -X: mask in (z=i, y_offset=j), face at bxBase+x
+  for (let x = 0; x < 16; x++) {
+    for (let y = yMin; y <= yMax; y++)
+      for (let z = 0; z < 16; z++) {
+        const bt = grid[x + z*16 + y*256];
+        mask[z + (y-yMin)*16] = (bt && !(x > 0 && grid[(x-1) + z*16 + y*256])) ? bt : 0;
+      }
+    greedy(16, yRange, (i0, j0, w, h, t) => {
+      const [r,g,b] = getBlockRGB(nameList[t]);
+      const X=bxBase+x, Y0=yMin+j0, Z0=bzBase+i0;
+      pushFace(-1,0,0, r,g,b,
+        X,Y0,Z0,    X,Y0,Z0+w,  X,Y0+h,Z0+w,
+        X,Y0,Z0,    X,Y0+h,Z0+w, X,Y0+h,Z0);
+    });
   }
 
   if (positions.length === 0) return null;
