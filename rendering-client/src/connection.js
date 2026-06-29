@@ -7,6 +7,7 @@ export class BridgeConnection {
     this.ws = null;
     this.isConnected = false;
     this.onChunk = onChunk;
+    this.onRawChunk = null; // set by main.js to receive raw chunk strings for deferred parse
     this.onBotReady = onBotReady;
     this.onBotPosition = onBotPosition;
     this.onError = onError;
@@ -27,9 +28,13 @@ export class BridgeConnection {
         };
 
         this.ws.onmessage = (event) => {
+          // Chunk data is large — defer JSON.parse to frame loop to avoid blocking input
+          if (event.data.length > 500) {
+            if (this.onRawChunk) this.onRawChunk(event.data);
+            return;
+          }
           try {
-            const message = JSON.parse(event.data);
-            this.handleMessage(message);
+            this.handleMessage(JSON.parse(event.data));
           } catch (e) {
             console.error('Failed to parse message:', e.message);
           }
