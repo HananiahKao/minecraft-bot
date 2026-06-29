@@ -59,14 +59,25 @@ function initBot() {
     // Send already-loaded chunks around spawn
     requestChunksAround(bot.entity.position);
 
-    // Stream bot position to clients every tick (50ms)
+    // Stream bot position and trigger chunk updates as bot crosses chunk boundaries
+    let lastChunkX = Math.floor(bot.entity.position.x / 16);
+    let lastChunkZ = Math.floor(bot.entity.position.z / 16);
     if (positionBroadcastInterval) clearInterval(positionBroadcastInterval);
     positionBroadcastInterval = setInterval(() => {
-      if (connectedClients.length > 0 && bot && bot.entity) {
+      if (!bot || !bot.entity) return;
+      if (connectedClients.length > 0) {
         broadcastMessage({
           type: 'bot_position',
           position: bot.entity.position.toArray()
         });
+      }
+      // When bot crosses into a new chunk, broadcast all loaded chunks in radius
+      const cx = Math.floor(bot.entity.position.x / 16);
+      const cz = Math.floor(bot.entity.position.z / 16);
+      if (cx !== lastChunkX || cz !== lastChunkZ) {
+        lastChunkX = cx;
+        lastChunkZ = cz;
+        if (connectedClients.length > 0) requestChunksAround(bot.entity.position);
       }
     }, 50);
   });
@@ -128,7 +139,7 @@ function requestChunksAround(position) {
   if (!bot || !bot.world) return;
   const chunkX = Math.floor(position.x / 16);
   const chunkZ = Math.floor(position.z / 16);
-  const radius = 4;
+  const radius = 8;
   for (let x = chunkX - radius; x <= chunkX + radius; x++) {
     for (let z = chunkZ - radius; z <= chunkZ + radius; z++) {
       try {
