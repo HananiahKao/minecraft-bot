@@ -81,6 +81,9 @@ function onError(error) {
 }
 
 let _frameCount = 0;
+let _fpsLastTime = performance.now();
+let _fpsFrames = 0;
+let _currentFps = 0;
 let _frameBudgetViolations = 0;
 
 function startUpdateLoop() {
@@ -136,15 +139,23 @@ function startUpdateLoop() {
 
     const _frameTotal = performance.now() - _frameStart;
     _frameCount++;
+    _fpsFrames++;
+    const _now = performance.now();
+    if (_now - _fpsLastTime >= 500) {
+      _currentFps = Math.round(_fpsFrames * 1000 / (_now - _fpsLastTime));
+      _fpsFrames = 0;
+      _fpsLastTime = _now;
+    }
     if (_frameTotal > 33) {  // log anything below 30fps
       _frameBudgetViolations++;
-      console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+      console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
+    const fpsStr = `${_currentFps} FPS`;
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
-      updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded} (+${chunkQueue.length} load, -${unloadQueue.length} unload)`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${totalChunksLoaded} (+${chunkQueue.length} load, -${unloadQueue.length} unload)`);
     } else {
-      updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${totalChunksLoaded}`);
     }
 
   };
