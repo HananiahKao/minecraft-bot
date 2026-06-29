@@ -81,13 +81,12 @@ export class InputHandler {
     return this.controls;
   }
 
-  // Three.js euler.y → Minecraft yaw (standard MC: yaw=0=south, yaw=π=north)
-  // Camera at euler.y faces (-sin(euler.y), 0, -cos(euler.y))
-  // Mineflayer front at yaw faces (-sin(yaw), 0, cos(yaw))
-  // Matching both: yaw = π - euler.y
+  // Three.js euler.y → Mineflayer yaw
+  // Both use: facing direction = (-sin(angle), 0, -cos(angle))
+  // Mineflayer internal: yaw=0=north(-Z), yaw=π=south(+Z)  [see conversions.js toNotchianYaw]
   getMCYaw() {
     this.euler.setFromQuaternion(this.camera.quaternion);
-    return Math.PI - this.euler.y;
+    return this.euler.y;
   }
 
   // Three.js: negative euler.x = looking down. Minecraft: positive pitch = looking down
