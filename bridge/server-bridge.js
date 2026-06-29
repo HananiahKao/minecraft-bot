@@ -140,14 +140,30 @@ function requestChunksAround(position) {
   const chunkX = Math.floor(position.x / 16);
   const chunkZ = Math.floor(position.z / 16);
   const radius = 8;
+
+  // Build the list of coords first, then broadcast one per event-loop tick
+  // so incoming player_input messages aren't blocked during the burst.
+  const coords = [];
   for (let x = chunkX - radius; x <= chunkX + radius; x++) {
     for (let z = chunkZ - radius; z <= chunkZ + radius; z++) {
+      coords.push([x, z]);
+    }
+  }
+
+  let i = 0;
+  function sendNext() {
+    if (!bot || !bot.world || connectedClients.length === 0) return;
+    const end = Math.min(i + 4, coords.length); // 4 chunks per tick
+    for (; i < end; i++) {
+      const [x, z] = coords[i];
       try {
         const chunkData = bot.world.getColumn(x, z);
         if (chunkData) broadcastChunk(x, z, chunkData);
       } catch (e) {}
     }
+    if (i < coords.length) setImmediate(sendNext);
   }
+  setImmediate(sendNext);
 }
 
 function broadcastMessage(message) {
