@@ -1,10 +1,18 @@
 /**
  * Three.js renderer for Minecraft chunks
+ *
+ * Geometry strategy: chunk vertex data is accumulated in chunkData (Float32Arrays).
+ * During loading, temporary individual meshes show terrain progressively.
+ * When flushMerge() is called (queues idle), all tempMeshes are replaced by a single
+ * merged worldMesh — reducing GPU draw calls from N to 1.
+ *
+ * Face culling: FrontSide with explicit CCW winding (from outside the block).
+ * Halves GPU fragment work vs DoubleSide.
  */
 
 import * as THREE from 'three';
 
-// Pre-build color lookup: exact name first, then suffix-match fallback table
+// Pre-computed block color lookup (O(1) exact match, substring fallback cached on first miss)
 const BLOCK_COLORS_EXACT = {
   stone: 0x808080, granite: 0x917066, diorite: 0xb3b3b3, andesite: 0x8f8f8f,
   cobblestone: 0x707070, mossy_cobblestone: 0x5c7066, bedrock: 0x1a1a1a,
@@ -85,25 +93,116 @@ const BLOCK_COLORS_EXACT = {
   end_rod: 0xc8c8ff, cave_air: 0x808080,
 };
 
-// Runtime cache: block name → [r, g, b] components (avoids THREE.Color allocation per block)
 const colorCache = new Map();
 
 function getBlockRGB(blockName) {
   if (colorCache.has(blockName)) return colorCache.get(blockName);
   let hex = BLOCK_COLORS_EXACT[blockName];
   if (hex === undefined) {
-    // substring fallback — only runs once per unknown name
     for (const [key, val] of Object.entries(BLOCK_COLORS_EXACT)) {
       if (blockName.includes(key)) { hex = val; break; }
     }
     if (hex === undefined) hex = 0xff00ff;
   }
-  const r = ((hex >> 16) & 0xff) / 255;
-  const g = ((hex >> 8) & 0xff) / 255;
-  const b = (hex & 0xff) / 255;
-  const rgb = [r, g, b];
+  const rgb = [((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255];
   colorCache.set(blockName, rgb);
   return rgb;
+}
+
+// Shared material — one material for the entire merged world mesh
+const WORLD_MATERIAL = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  side: THREE.FrontSide, // CCW winding enforced below; halves GPU fragment work
+});
+
+// Temporary material for individual meshes shown during loading
+const TEMP_MATERIAL = WORLD_MATERIAL;
+
+function buildChunkArrays(chunkX, chunkZ, blocks) {
+  const presence = new Uint8Array(16 * 256 * 16);
+  for (const { x, y, z } of blocks) {
+    presence[x + z * 16 + y * 256] = 1;
+  }
+
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  const bxBase = chunkX * 16;
+  const bzBase = chunkZ * 16;
+
+  for (const { x, y, z, name } of blocks) {
+    const [r, g, b] = getBlockRGB(name);
+    const bx = bxBase + x;
+    const by = y;
+    const bz = bzBase + z;
+
+    // All faces wound CCW when viewed from OUTSIDE the block (FrontSide culls backfaces).
+    // Coordinate system: X right, Y up, Z toward viewer (+Z = south in Three.js/Minecraft).
+
+    // Top +Y  (viewed from above: CCW = A(left-far), B(right-far), C(left-near), D(right-near))
+    if (y === 255 || !presence[x + z * 16 + (y + 1) * 256]) {
+      positions.push(
+        bx,   by+1, bz+1,   bx+1, by+1, bz,   bx,   by+1, bz,   // tri 1
+        bx,   by+1, bz+1,   bx+1, by+1, bz+1, bx+1, by+1, bz    // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(0, 1, 0); colors.push(r, g, b); }
+    }
+    // Bottom -Y (viewed from below: CCW = opposite winding of top)
+    if (y === 0 || !presence[x + z * 16 + (y - 1) * 256]) {
+      positions.push(
+        bx,   by, bz,   bx+1, by, bz,   bx,   by, bz+1,   // tri 1
+        bx+1, by, bz,   bx+1, by, bz+1, bx,   by, bz+1    // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(0, -1, 0); colors.push(r, g, b); }
+    }
+    // Front +Z (viewed from +Z side: CCW)
+    if (z === 15 || !presence[x + (z + 1) * 16 + y * 256]) {
+      positions.push(
+        bx,   by,   bz+1,   bx+1, by,   bz+1,   bx,   by+1, bz+1,  // tri 1
+        bx+1, by,   bz+1,   bx+1, by+1, bz+1,   bx,   by+1, bz+1   // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(0, 0, 1); colors.push(r, g, b); }
+    }
+    // Back -Z (viewed from -Z side: CCW)
+    if (z === 0 || !presence[x + (z - 1) * 16 + y * 256]) {
+      positions.push(
+        bx+1, by,   bz,   bx,   by,   bz,   bx+1, by+1, bz,  // tri 1
+        bx,   by,   bz,   bx,   by+1, bz,   bx+1, by+1, bz   // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(0, 0, -1); colors.push(r, g, b); }
+    }
+    // Right +X (viewed from +X side: CCW — V1=-Z, V2=+Y → N=+X)
+    if (x === 15 || !presence[(x + 1) + z * 16 + y * 256]) {
+      positions.push(
+        bx+1, by,   bz+1,   bx+1, by,   bz,   bx+1, by+1, bz,   // tri 1
+        bx+1, by,   bz+1,   bx+1, by+1, bz,   bx+1, by+1, bz+1  // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(1, 0, 0); colors.push(r, g, b); }
+    }
+    // Left -X (viewed from -X side: CCW — V1=+Z, V2=+Y → N=-X)
+    if (x === 0 || !presence[(x - 1) + z * 16 + y * 256]) {
+      positions.push(
+        bx, by,   bz,   bx, by,   bz+1,   bx, by+1, bz+1,  // tri 1
+        bx, by,   bz,   bx, by+1, bz+1,   bx, by+1, bz     // tri 2
+      );
+      for (let i = 0; i < 6; i++) { normals.push(-1, 0, 0); colors.push(r, g, b); }
+    }
+  }
+
+  if (positions.length === 0) return null;
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    colors: new Float32Array(colors),
+  };
+}
+
+function makeGeometry(data) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+  geo.setAttribute('normal',   new THREE.BufferAttribute(data.normals,   3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(data.colors,    3));
+  return geo;
 }
 
 export class MinecraftRenderer {
@@ -113,12 +212,7 @@ export class MinecraftRenderer {
     this.scene.background = new THREE.Color(0x87ceeb);
     this.scene.fog = new THREE.Fog(0x87ceeb, 100, 500);
 
-    this.camera = new THREE.PerspectiveCamera(
-      90,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
+    this.camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
     this.camera.position.set(0, 70, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -128,124 +222,113 @@ export class MinecraftRenderer {
     container.appendChild(this.renderer.domElement);
 
     this.setupLighting();
-    this.chunkMeshes = new Map();
+
+    // Per-chunk vertex data (always maintained for merge)
+    this.chunkData = new Map();   // key → {positions, normals, colors} Float32Arrays
+    // Track loaded chunk keys (for duplicate check and count)
+    this.chunkMeshes = new Map(); // key → THREE.Mesh (temp individual mesh, null after merge)
+
+    this.worldMesh = null;   // single merged mesh (replaces all tempMeshes when flushed)
+    this.worldDirty = false; // needs flushMerge()
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
 
   setupLighting() {
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    this.scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    directionalLight.position.set(100, 200, 100);
-    directionalLight.castShadow = false;
-    this.scene.add(directionalLight);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+    sun.position.set(100, 200, 100);
+    sun.castShadow = false;
+    this.scene.add(sun);
   }
 
   addChunk(chunkX, chunkZ, blocks) {
-    const chunkKey = `${chunkX},${chunkZ}`;
-    if (this.chunkMeshes.has(chunkKey)) return false;
+    const key = `${chunkX},${chunkZ}`;
+    if (this.chunkMeshes.has(key)) return false;
 
-    // Build a flat Uint32 presence set: key = x | (y << 4) | (z << 11)
-    // x: 0-15 (4 bits), z: 0-15 (4 bits, shift 4), y: 0-255 (8 bits, shift 8)
-    // Use a typed Set of integers for O(1) neighbour lookup without string alloc
-    const presence = new Uint8Array(16 * 256 * 16);
-    for (const { x, y, z } of blocks) {
-      presence[x + z * 16 + y * 256] = 1;
-    }
+    const data = buildChunkArrays(chunkX, chunkZ, blocks);
+    if (!data) return false;
 
-    const positions = [];
-    const normals = [];
-    const colors = [];
+    this.chunkData.set(key, data);
 
-    const bxBase = chunkX * 16;
-    const bzBase = chunkZ * 16;
-
-    for (const { x, y, z, name } of blocks) {
-      const [r, g, b] = getBlockRGB(name);
-      const bx = bxBase + x;
-      const by = y;
-      const bz = bzBase + z;
-
-      // Top +Y
-      if (y === 255 || !presence[x + z * 16 + (y + 1) * 256]) {
-        positions.push(bx, by+1, bz+1, bx+1, by+1, bz+1, bx+1, by+1, bz, bx, by+1, bz+1, bx+1, by+1, bz, bx, by+1, bz);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(0, 1, 0); }
-      }
-      // Bottom -Y
-      if (y === 0 || !presence[x + z * 16 + (y - 1) * 256]) {
-        positions.push(bx, by, bz, bx+1, by, bz, bx+1, by, bz+1, bx, by, bz, bx+1, by, bz+1, bx, by, bz+1);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(0, -1, 0); }
-      }
-      // Front +Z
-      if (z === 15 || !presence[x + (z + 1) * 16 + y * 256]) {
-        positions.push(bx+1, by, bz+1, bx, by, bz+1, bx, by+1, bz+1, bx+1, by, bz+1, bx, by+1, bz+1, bx+1, by+1, bz+1);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(0, 0, 1); }
-      }
-      // Back -Z
-      if (z === 0 || !presence[x + (z - 1) * 16 + y * 256]) {
-        positions.push(bx, by, bz, bx+1, by, bz, bx+1, by+1, bz, bx, by, bz, bx+1, by+1, bz, bx, by+1, bz);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(0, 0, -1); }
-      }
-      // Right +X
-      if (x === 15 || !presence[(x + 1) + z * 16 + y * 256]) {
-        positions.push(bx+1, by, bz+1, bx+1, by, bz, bx+1, by+1, bz, bx+1, by, bz+1, bx+1, by+1, bz, bx+1, by+1, bz+1);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(1, 0, 0); }
-      }
-      // Left -X
-      if (x === 0 || !presence[(x - 1) + z * 16 + y * 256]) {
-        positions.push(bx, by, bz, bx, by, bz+1, bx, by+1, bz+1, bx, by, bz, bx, by+1, bz+1, bx, by+1, bz);
-        for (let i = 0; i < 6; i++) { colors.push(r, g, b); normals.push(-1, 0, 0); }
-      }
-    }
-
-    if (positions.length === 0) return false;
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
-
-    const material = new THREE.MeshPhongMaterial({
-      vertexColors: true,
-      flatShading: true,
-      side: THREE.DoubleSide,
-    });
-
-    const mesh = new THREE.Mesh(geometry, material);
+    // Temporary individual mesh — visible during loading, removed on flushMerge
+    const mesh = new THREE.Mesh(makeGeometry(data), TEMP_MATERIAL);
     this.scene.add(mesh);
-    this.chunkMeshes.set(chunkKey, mesh);
+    this.chunkMeshes.set(key, mesh);
+    this.worldDirty = true;
     return true;
   }
 
   removeChunk(chunkX, chunkZ) {
-    const chunkKey = `${chunkX},${chunkZ}`;
-    const mesh = this.chunkMeshes.get(chunkKey);
-    if (!mesh) return;
-    this.scene.remove(mesh);
-    mesh.geometry.dispose();
-    mesh.material.dispose();
-    this.chunkMeshes.delete(chunkKey);
+    const key = `${chunkX},${chunkZ}`;
+    const mesh = this.chunkMeshes.get(key);
+    if (mesh) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    this.chunkMeshes.delete(key);
+    this.chunkData.delete(key);
+    this.worldDirty = true;
   }
 
-  setCameraPosition(x, y, z) {
-    this.camera.position.set(x, y, z);
+  // Call when chunk queues are idle — merges all chunk geometries into one draw call.
+  flushMerge() {
+    if (!this.worldDirty || this.chunkData.size === 0) return;
+    this.worldDirty = false;
+
+    // Measure total vertex count
+    let totalFloats = 0;
+    for (const d of this.chunkData.values()) totalFloats += d.positions.length;
+
+    const positions = new Float32Array(totalFloats);
+    const normals   = new Float32Array(totalFloats);
+    const colors    = new Float32Array(totalFloats);
+
+    let offset = 0;
+    for (const d of this.chunkData.values()) {
+      positions.set(d.positions, offset);
+      normals.set(d.normals,     offset);
+      colors.set(d.colors,       offset);
+      offset += d.positions.length;
+    }
+
+    // Remove all temporary individual meshes
+    for (const mesh of this.chunkMeshes.values()) {
+      if (mesh) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+      }
+    }
+    // Replace map values with null (keys kept for duplicate detection)
+    for (const key of this.chunkMeshes.keys()) {
+      this.chunkMeshes.set(key, null);
+    }
+
+    // Remove old world mesh
+    if (this.worldMesh) {
+      this.scene.remove(this.worldMesh);
+      this.worldMesh.geometry.dispose();
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+
+    this.worldMesh = new THREE.Mesh(geo, WORLD_MATERIAL);
+    this.scene.add(this.worldMesh);
+
+    console.log(`[MERGE] ${this.chunkData.size} chunks → 1 draw call (${(totalFloats * 4 / 1024).toFixed(0)} KB GPU)`);
   }
 
-  getCameraPosition() {
-    return { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z };
-  }
+  setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }
+  getCameraPosition() { return { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z }; }
 
-  render() {
-    this.renderer.render(this.scene, this.camera);
-  }
+  render() { this.renderer.render(this.scene, this.camera); }
 
   onWindowResize() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    this.camera.aspect = width / height;
+    this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 }
