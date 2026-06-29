@@ -141,7 +141,7 @@ function startUpdateLoop() {
     _frameCount++;
     _fpsFrames++;
     const _now = performance.now();
-    if (_now - _fpsLastTime >= 500) {
+    if (_now - _fpsLastTime >= 250) {
       _currentFps = Math.round(_fpsFrames * 1000 / (_now - _fpsLastTime));
       _fpsFrames = 0;
       _fpsLastTime = _now;
