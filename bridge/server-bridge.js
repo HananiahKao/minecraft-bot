@@ -293,7 +293,7 @@ wss.on('connection', (ws) => {
         }
       } else if (message.type === 'place_block' && botReady && bot) {
         const now = Date.now();
-        if (now - _placeLastMs < 250) break; // 250ms cooldown between placements
+        if (now - _placeLastMs < 250) return; // 250ms cooldown between placements
         _placeLastMs = now;
         const { x, y, z } = message.block;
         const face = message.face || { x: 0, y: 1, z: 0 };
