@@ -13,6 +13,13 @@ const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
   side: THREE.FrontSide,
 });
 
+const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+// Unit cube edges (12 lines × 2 vertices)
+const _BOX_EDGES = (() => {
+  const geo = new THREE.BoxGeometry(1.002, 1.002, 1.002);
+  return new THREE.EdgesGeometry(geo);
+})();
+
 export class MinecraftRenderer {
   constructor(container) {
     this.container = container;
@@ -35,6 +42,17 @@ export class MinecraftRenderer {
     this.chunkMeshes = new Map();
     // key "x,z" → true (sent to worker, geometry not yet received)
     this._pending = new Set();
+
+    this._raycaster = new THREE.Raycaster();
+    this._raycaster.near = 0.1;
+    this._raycaster.far = 10;
+    this._raycaster.firstHitOnly = true;
+    this._centerNDC = new THREE.Vector2(0, 0);
+
+    this._highlightMesh = new THREE.LineSegments(_BOX_EDGES, HIGHLIGHT_MATERIAL);
+    this._highlightMesh.visible = false;
+    this.scene.add(this._highlightMesh);
+    this.targetedBlock = null; // { x, y, z } or null
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
@@ -88,6 +106,30 @@ export class MinecraftRenderer {
     for (const mesh of this.chunkMeshes.values())
       n += mesh.geometry.attributes.position.count;
     return n;
+  }
+
+  // Call once per frame (before render). Updates targetedBlock and highlight box.
+  updateRaycast() {
+    this._raycaster.setFromCamera(this._centerNDC, this.camera);
+    const meshes = Array.from(this.chunkMeshes.values());
+    const hits = this._raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) {
+      this._highlightMesh.visible = false;
+      this.targetedBlock = null;
+      return;
+    }
+    const hit = hits[0];
+    // Step slightly inside the hit face to land in the correct block
+    const n = hit.face.normal;
+    const px = hit.point.x - n.x * 0.5;
+    const py = hit.point.y - n.y * 0.5;
+    const pz = hit.point.z - n.z * 0.5;
+    const bx = Math.floor(px);
+    const by = Math.floor(py);
+    const bz = Math.floor(pz);
+    this.targetedBlock = { x: bx, y: by, z: bz };
+    this._highlightMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
+    this._highlightMesh.visible = true;
   }
 
   setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }

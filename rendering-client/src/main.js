@@ -288,6 +288,7 @@ function startUpdateLoop() {
     const _dt_add = performance.now() - _t_add;
 
     const _t_render = performance.now();
+    renderer.updateRaycast();
     renderer.render();
     const _dt_render = performance.now() - _t_render;
 
@@ -339,10 +340,12 @@ function startUpdateLoop() {
     }
 
     const fpsStr = `${_currentFps} FPS`;
+    const tb = renderer.targetedBlock;
+    const targetStr = tb ? ` | ${tb.x} ${tb.y} ${tb.z}` : '';
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size} (+${chunkQueue.length} load, -${unloadQueue.length} unload)`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size} (+${chunkQueue.length} load, -${unloadQueue.length} unload)${targetStr}`);
     } else {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size}`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size}${targetStr}`);
     }
 
   };

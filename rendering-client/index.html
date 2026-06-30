@@ -89,10 +89,29 @@
     #info p {
       margin: 5px 0;
     }
+
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px;
+      height: 20px;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.85);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
   </style>
 </head>
 <body>
   <div id="canvas"></div>
+  <div id="crosshair"></div>
 
   <div id="status">Connecting...</div>
 
