@@ -11,7 +11,6 @@ import { BridgeConnection } from './connection.js';
 let renderer = null;
 let inputHandler = null;
 let connection = null;
-let totalChunksLoaded = 0;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 const CHUNKS_PER_FRAME = 1;     // max chunks to build geometry for per frame
@@ -80,7 +79,7 @@ function init() {
 function onBotReady(position) {
   console.log('🤖 Bot ready at', position);
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
-  updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
+  updateStatus(`🎮 Playing | Chunks: ${renderer.chunkMeshes.size}`);
   const cx = Math.floor(position[0] / 16);
   const cz = Math.floor(position[2] / 16);
   lastBotChunkX = cx;
@@ -265,7 +264,6 @@ function startUpdateLoop() {
     for (let i = 0; i < CHUNKS_PER_FRAME && unloadQueue.length > 0; i++) {
       const [kx, kz] = unloadQueue.shift();
       renderer.removeChunk(kx, kz);
-      totalChunksLoaded--;
     }
     const _dt_unload = performance.now() - _t_unload;
 
@@ -275,7 +273,6 @@ function startUpdateLoop() {
       try {
         const queued = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
         if (queued) {
-          totalChunksLoaded++;
           if (!_loadPhaseStart) _loadPhaseStart = performance.now();
           _loadPhaseRecorded = false;
         }
@@ -346,9 +343,9 @@ function startUpdateLoop() {
 
     const fpsStr = `${_currentFps} FPS`;
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${totalChunksLoaded} (+${chunkQueue.length} load, -${unloadQueue.length} unload)`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size} (+${chunkQueue.length} load, -${unloadQueue.length} unload)`);
     } else {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${totalChunksLoaded}`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size}`);
     }
 
   };
