@@ -82,7 +82,8 @@ function init() {
   // Decouple input from render loop — fires at steady 20Hz regardless of fps
   setInterval(() => {
     if (connection && connection.isConnected && inputHandler) {
-      connection.sendPlayerInput(inputHandler.getControls(), inputHandler.getMCYaw(), inputHandler.getMCPitch());
+      const tb = renderer ? renderer.targetedBlock : null;
+      connection.sendPlayerInput(inputHandler.getControls(), inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb);
     }
   }, INPUT_SEND_INTERVAL);
 

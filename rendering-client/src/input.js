@@ -16,6 +16,7 @@ export class InputHandler {
     this._pendingDY = 0;
     this._flyToggle = false;     // one-shot: true for one send cycle after double-tap Space
     this._lastSpaceTap = 0;      // timestamp of last Space keydown leading edge
+    this._breakPending = false;  // one-shot: left-click while locked → break targeted block
 
     this.controls = {
       forward: false,
@@ -67,9 +68,18 @@ export class InputHandler {
       this._pendingDY += e.movementY || e.mozMovementY || 0;
     });
 
+    document.addEventListener('mousedown', (e) => {
+      if (e.target.closest('#metrics')) return;
+      if (!this.isPointerLocked) {
+        document.body.requestPointerLock();
+        return;
+      }
+      if (e.button === 0) this._breakPending = true;
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target.closest('#metrics')) return;
-      document.body.requestPointerLock();
+      if (!this.isPointerLocked) document.body.requestPointerLock();
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -99,14 +109,11 @@ export class InputHandler {
 
   getControls() {
     const flyToggle = this._flyToggle;
-    this._flyToggle = false; // consume — sent once per double-tap
-    // Suppress jump on the same tick as flyToggle so the second Space tap
-    // doesn't also trigger a ground jump while toggling flight.
-    // Also clear controls.jump so subsequent interval ticks don't inherit it —
-    // the keyup event may not have fired yet, which would cause auto-ascend
-    // for ~50–150ms (one or more 50ms interval ticks) after toggle.
+    this._flyToggle = false;
     if (flyToggle) this.controls.jump = false;
-    return { ...this.controls, flyToggle };
+    const breakBlock = this._breakPending;
+    this._breakPending = false;
+    return { ...this.controls, flyToggle, breakBlock };
   }
 
   getMCYaw() {

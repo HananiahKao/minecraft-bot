@@ -96,8 +96,8 @@ export class BridgeConnection {
     }
   }
 
-  sendPlayerInput(controls, yaw, pitch) {
-    this.send({ type: 'player_input', controls, yaw, pitch });
+  sendPlayerInput(controls, yaw, pitch, targetedBlock) {
+    this.send({ type: 'player_input', controls, yaw, pitch, targetedBlock });
   }
 
   close() {

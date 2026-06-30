@@ -245,7 +245,16 @@ wss.on('connection', (ws) => {
         }
         setImmediate(sendNext);
       } else if (message.type === 'player_input' && botReady && bot && bot.entity) {
-        const { controls, yaw, pitch } = message;
+        const { controls, yaw, pitch, targetedBlock } = message;
+
+        if (controls.breakBlock && targetedBlock) {
+          const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
+          const block = bot.blockAt(pos);
+          if (block && block.name !== 'air') {
+            console.log(`⛏️  Breaking ${block.name} at ${pos}`);
+            bot.dig(block).catch(e => console.warn('dig failed:', e.message));
+          }
+        }
         const isCreative = bot.game && bot.game.gameMode === 'creative';
 
         if (isCreative) {
