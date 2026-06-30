@@ -66,6 +66,7 @@ function init() {
   worker.onerror = (e) => console.error('[worker error]', e.message, e.filename, e.lineno);
   worker.onmessage = ({ data }) => {
     if (data.empty) return;
+    if (data.unknown) data.unknown.forEach(n => _unknownBlocks.add(n));
     const t0 = performance.now();
     renderer.applyChunkGeometry(data.x, data.z, data.positions, data.normals, data.colors);
     _chunkBuildTimes.push(performance.now() - t0);
@@ -193,6 +194,7 @@ let _isLoRes = false;
 // Metrics tracking — accumulated
 const _chunkBuildTimes = [];
 let _totalVertices = 0;
+const _unknownBlocks = new Set();
 let _minFps = Infinity;
 let _loadPhaseStart = null;
 let _loadPhaseEnd = null;
@@ -389,6 +391,7 @@ function updateMetrics() {
   const chunkCount   = renderer ? renderer.chunkMeshes.size : 0;
   const pendingCount = renderer ? renderer._pending.size : 0;
 
+  const unknownList = Array.from(_unknownBlocks).sort();
   const statsLines = [
     ['b', 'Chunk Build (worker)'],
     ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
@@ -402,6 +405,10 @@ function updateMetrics() {
     ['',  `violations (>33ms): ${violationPct}%`],
     ['',  `vertices: ${vertStr}`],
     ['',  `chunks: ${chunkCount}  pending: ${pendingCount}`],
+    ['b', `Unknown Blocks (${unknownList.length})`],
+    ...( unknownList.length > 0
+      ? unknownList.map(n => ['u', n])
+      : [['', '(none)']] ),
   ];
 
   // Build bottom section based on active tab
@@ -430,7 +437,9 @@ function updateMetrics() {
   // Build HTML
   const statsHtml = statsLines.map(([type, text]) => {
     const esc = text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
-    return type === 'b' ? `<br><b>${esc}</b>` : esc;
+    if (type === 'b') return `<br><b>${esc}</b>`;
+    if (type === 'u') return `<span style="color:#f9a">${esc}</span>`;
+    return esc;
   }).join('<br>');
 
   const TAB_BTN = (id, label) => {

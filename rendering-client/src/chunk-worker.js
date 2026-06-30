@@ -83,6 +83,8 @@ const BLOCK_COLORS = {
 
 const colorCache = new Map();
 
+const _unknownBlocks = new Set(); // reported back to main thread
+
 function getBlockRGB(name) {
   if (colorCache.has(name)) return colorCache.get(name);
   let hex = BLOCK_COLORS[name];
@@ -90,7 +92,10 @@ function getBlockRGB(name) {
     for (const [key, val] of Object.entries(BLOCK_COLORS)) {
       if (name.includes(key)) { hex = val; break; }
     }
-    if (hex === undefined) hex = 0xff00ff;
+    if (hex === undefined) {
+      hex = 0xff00ff;
+      _unknownBlocks.add(name);
+    }
   }
   const rgb = [((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255];
   colorCache.set(name, rgb);
@@ -272,9 +277,9 @@ self.onmessage = ({ data: { x, z, blocks } }) => {
     self.postMessage({ x, z, empty: true });
     return;
   }
-  // Transfer ownership of the backing ArrayBuffers — zero-copy back to main thread
+  const unknown = _unknownBlocks.size > 0 ? Array.from(_unknownBlocks) : null;
   self.postMessage(
-    { x, z, positions: result.positions, normals: result.normals, colors: result.colors },
+    { x, z, positions: result.positions, normals: result.normals, colors: result.colors, unknown },
     [result.positions.buffer, result.normals.buffer, result.colors.buffer]
   );
 };
