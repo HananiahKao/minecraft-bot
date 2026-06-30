@@ -100,7 +100,9 @@ export class InputHandler {
   getControls() {
     const flyToggle = this._flyToggle;
     this._flyToggle = false; // consume — sent once per double-tap
-    return { ...this.controls, flyToggle };
+    // Suppress jump on the same tick as flyToggle so the second Space tap
+    // doesn't also trigger a ground jump while toggling flight
+    return { ...this.controls, jump: flyToggle ? false : this.controls.jump, flyToggle };
   }
 
   getMCYaw() {

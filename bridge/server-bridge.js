@@ -234,9 +234,18 @@ wss.on('connection', (ws) => {
         const isCreative = bot.game && bot.game.gameMode === 'creative';
 
         if (isCreative) {
-          // flyToggle is a one-shot signal from the client, set on double-tap Space
-          // keydown (browser keydown fires once per physical press, no repeat ambiguity)
-          if (controls.flyToggle) bot.entity.isFlying = !bot.entity.isFlying;
+          // flyToggle is a one-shot signal from the client, set on double-tap Space.
+          // Must write an abilities packet — setting bot.entity.isFlying directly is
+          // overridden by prismarine-physics on every tick.
+          if (controls.flyToggle) {
+            const nowFlying = !bot.entity.isFlying;
+            bot._client.write('abilities', {
+              flags: nowFlying ? 0x02 : 0x00,
+              flyingSpeed: 0.05,
+              walkingSpeed: 0.1,
+            });
+            bot.entity.isFlying = nowFlying;
+          }
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
           // Horizontal controls and sprint work the same as on the ground.
