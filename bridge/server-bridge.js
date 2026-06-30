@@ -257,8 +257,14 @@ wss.on('connection', (ws) => {
             bot.entity.isFlying = nowFlying;
             // bot.creative.startFlying/stopFlying zero bot.physics.gravity so
             // prismarine-physics stops applying gravity on subsequent ticks.
-            if (nowFlying) bot.creative.startFlying();
-            else bot.creative.stopFlying();
+            if (nowFlying) {
+              bot.creative.startFlying();
+              // Zero vertical velocity so any upward momentum from the jump that
+              // triggered the double-tap doesn't carry over into flight.
+              bot.entity.velocity.y = 0;
+            } else {
+              bot.creative.stopFlying();
+            }
           }
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
@@ -268,8 +274,22 @@ wss.on('connection', (ws) => {
             for (const control of flyControls) {
               if (control in controls) bot.setControlState(control, !!controls[control]);
             }
-            bot.setControlState('jump',  !!controls.jump);   // ascend
-            bot.setControlState('sneak', !!controls.sneak);  // descend
+            // prismarine-physics with gravity=0 does NOT apply vertical velocity for
+            // jump/sneak control states — those branches only trigger on-ground.
+            // Drive vertical velocity directly, matching Minecraft creative-flight speed.
+            // The physics tick will then translate this velocity into position movement.
+            const FLY_SPEED_Y = 0.25; // blocks/tick — matches vanilla creative ascend/descend
+            if (controls.jump && !controls.sneak) {
+              bot.entity.velocity.y = FLY_SPEED_Y;
+            } else if (controls.sneak && !controls.jump) {
+              bot.entity.velocity.y = -FLY_SPEED_Y;
+            } else {
+              bot.entity.velocity.y = 0;
+            }
+            // Still set the control states so any physics plugin that does read them stays
+            // consistent, but the velocity above is what actually moves the bot.
+            bot.setControlState('jump',  !!controls.jump);
+            bot.setControlState('sneak', !!controls.sneak);
           } else {
             // Not flying — apply all controls normally (walking/jumping in creative)
             const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];

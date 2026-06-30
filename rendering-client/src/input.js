@@ -101,8 +101,12 @@ export class InputHandler {
     const flyToggle = this._flyToggle;
     this._flyToggle = false; // consume — sent once per double-tap
     // Suppress jump on the same tick as flyToggle so the second Space tap
-    // doesn't also trigger a ground jump while toggling flight
-    return { ...this.controls, jump: flyToggle ? false : this.controls.jump, flyToggle };
+    // doesn't also trigger a ground jump while toggling flight.
+    // Also clear controls.jump so subsequent interval ticks don't inherit it —
+    // the keyup event may not have fired yet, which would cause auto-ascend
+    // for ~50–150ms (one or more 50ms interval ticks) after toggle.
+    if (flyToggle) this.controls.jump = false;
+    return { ...this.controls, flyToggle };
   }
 
   getMCYaw() {
