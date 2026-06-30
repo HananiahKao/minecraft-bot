@@ -230,6 +230,7 @@ function startUpdateLoop() {
       };
       _snapshots.push(snap);
       if (_snapshots.length > SNAPSHOT_COUNT) _snapshots.shift();
+      console.log(`[SNAP +${snap.t}s] fps=${snap.fps} idle=${snap.idleMs}ms mouse=${snap.mouseMs}ms viol=${snap.violPct}% chunks=${snap.chunks} dirty=${snap.dirty}`);
       // Reset accumulators
       _snapIdleSum = 0; _snapIdleCount = 0;
       _snapMouseSum = 0; _snapMouseCount = 0;
