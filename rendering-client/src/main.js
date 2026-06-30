@@ -288,8 +288,8 @@ function startUpdateLoop() {
       const { x, z, blocks } = chunkQueue.shift();
       const key = `${x},${z}`;
       let reserved = false;
-      if (renderer.chunkMeshes.has(key)) {
-        // Live update — old mesh stays visible until worker returns new geometry
+      if (renderer.chunkMeshes.has(key) || renderer._updating.has(key)) {
+        // Live update (loaded or mid-rebuild) — last worker result wins
         reserved = renderer.reserveUpdate(x, z);
       } else {
         reserved = renderer.reserveChunk(x, z);

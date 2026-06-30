@@ -75,17 +75,16 @@ export class MinecraftRenderer {
     return true;
   }
 
-  // Queue a live update for an already-loaded chunk. Old mesh stays visible until swap.
-  // Returns false if an update is already in flight for this chunk.
+  // Queue a live update for an already-loaded or currently-rebuilding chunk.
+  // Allows multiple worker messages in-flight for the same chunk — the last result wins.
   reserveUpdate(chunkX, chunkZ) {
     const key = `${chunkX},${chunkZ}`;
-    if (this._pending.has(key)) return false; // already rebuilding
     const existing = this.chunkMeshes.get(key);
     if (existing) {
-      this._updating.set(key, existing); // keep visible in scene
+      this._updating.set(key, existing); // keep visible in scene until swap
       this.chunkMeshes.delete(key);
     }
-    this._pending.add(key);
+    this._pending.add(key); // idempotent on Set — duplicate worker messages are fine
     return true;
   }
 
