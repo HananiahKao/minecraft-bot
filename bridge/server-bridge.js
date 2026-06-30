@@ -46,6 +46,14 @@ function initBot() {
     skipValidation: true
   });
 
+  // Log every server→client abilities packet so we can confirm the server accepted our flying state
+  bot._client.on('abilities', (packet) => {
+    const flying    = !!(packet.flags & 0x02);
+    const canFly    = !!(packet.flags & 0x04);
+    const instabuild = !!(packet.flags & 0x08);
+    console.log(`[abilities←server] flags=0x${packet.flags.toString(16).padStart(2,'0')} flying=${flying} canFly=${canFly} instabuild=${instabuild} flySpeed=${packet.flyingSpeed} walkSpeed=${packet.walkingSpeed}`);
+  });
+
   bot.on('spawn', () => {
     console.log('✅ Bot spawned!');
     console.log(`📍 Position: ${bot.entity.position.toString()}`);
