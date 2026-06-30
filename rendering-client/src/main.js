@@ -12,6 +12,8 @@ let renderer = null;
 let inputHandler = null;
 let connection = null;
 let worker = null;
+let _hotbarSlots = Array(9).fill(null); // { name, count } or null
+let _heldSlot = 0;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 let lastBotChunkX = null;
@@ -56,7 +58,9 @@ function init() {
     onChunkReceived,
     onBotReady,
     onBotPosition,
-    onError
+    onError,
+    onHotbar,
+    onHeldSlot
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
@@ -84,7 +88,13 @@ function init() {
   setInterval(() => {
     if (connection && connection.isConnected && inputHandler) {
       const tb = renderer ? renderer.targetedBlock : null;
-      connection.sendPlayerInput(inputHandler.getControls(), inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb);
+      const controls = inputHandler.getControls();
+      connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb);
+      if (controls.slotChanged) {
+        _heldSlot = controls.selectedSlot;
+        updateHotbar();
+        connection.send({ type: 'held_slot_change', slot: _heldSlot });
+      }
     }
   }, INPUT_SEND_INTERVAL);
 
@@ -173,6 +183,41 @@ function onChunkReceived(chunkData) {
 function onError(error) {
   console.error('Bridge error:', error.message);
   updateStatus(`Error: ${error.message}`);
+}
+
+function onHotbar(slots, heldSlot) {
+  _hotbarSlots = slots;
+  if (typeof heldSlot === 'number') _heldSlot = heldSlot;
+  updateHotbar();
+}
+
+function onHeldSlot(slot) {
+  _heldSlot = slot;
+  updateHotbar();
+}
+
+function updateHotbar() {
+  const el = document.getElementById('hotbar');
+  if (!el) return;
+  el.innerHTML = _hotbarSlots.map((item, i) => {
+    const active = i === _heldSlot;
+    const label = item ? item.name.replace(/_/g, ' ') : '';
+    return `<div style="
+      width:44px;height:44px;border:2px solid ${active ? '#ffcc00' : '#555'};
+      background:rgba(0,0,0,0.6);border-radius:3px;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;font-size:9px;color:${active ? '#ffcc00' : '#aaa'};
+      text-align:center;line-height:1.2;overflow:hidden;padding:2px;box-sizing:border-box;
+      cursor:pointer" data-slot="${i}">${label}</div>`;
+  }).join('');
+  el.querySelectorAll('[data-slot]').forEach(div => {
+    div.onclick = () => {
+      const slot = parseInt(div.dataset.slot);
+      _heldSlot = slot;
+      if (inputHandler) inputHandler.selectedSlot = slot;
+      updateHotbar();
+      if (connection) connection.send({ type: 'held_slot_change', slot });
+    };
+  });
 }
 
 let _frameCount = 0;
@@ -266,6 +311,8 @@ function startUpdateLoop() {
           const msg = JSON.parse(raw);
           if (msg.type === 'bot_position') onBotPosition(msg.position);
           else if (msg.type === 'bot_ready') onBotReady(msg.position, msg.gameMode);
+          else if (msg.type === 'hotbar') onHotbar(msg.slots, msg.heldSlot);
+          else if (msg.type === 'held_slot') onHeldSlot(msg.slot);
           else if (msg.type === 'error') onError(new Error(msg.message));
         } catch (e) {}
         rawChunkQueue.splice(i, 1);

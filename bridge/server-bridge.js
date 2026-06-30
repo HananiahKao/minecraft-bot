@@ -68,6 +68,7 @@ function initBot() {
 
     // Send already-loaded chunks around spawn
     requestChunksAround(bot.entity.position);
+    broadcastHotbar();
 
     // Stream bot position and trigger chunk updates as bot crosses chunk boundaries
     if (positionBroadcastInterval) clearInterval(positionBroadcastInterval);
@@ -111,6 +112,9 @@ function initBot() {
       } catch (e) {}
     }, 100));
   });
+
+  bot.on('playerCollect', () => broadcastHotbar());
+  bot.on('heldItemChanged', () => broadcastHotbar());
 
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning...');
@@ -199,6 +203,16 @@ function broadcastMessage(message) {
   }
 }
 
+function broadcastHotbar() {
+  if (!bot || !bot.inventory) return;
+  const slots = [];
+  for (let i = 0; i < 9; i++) {
+    const item = bot.inventory.slots[36 + i]; // hotbar is slots 36–44 in Minecraft protocol
+    slots.push(item ? { name: item.name, count: item.count } : null);
+  }
+  broadcastMessage({ type: 'hotbar', slots, heldSlot: bot.quickBarSlot });
+}
+
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const blocks = [];
@@ -240,6 +254,7 @@ wss.on('connection', (ws) => {
         gameMode: bot.game.gameMode,
       }));
       requestChunksAround(bot.entity.position);
+      broadcastHotbar();
     }
   } catch (e) {
     console.error('Failed to send init:', e.message);
@@ -249,7 +264,31 @@ wss.on('connection', (ws) => {
     try {
       const message = JSON.parse(data);
 
-      if (message.type === 'request_chunks' && botReady && bot && bot.world) {
+      if (message.type === 'held_slot_change' && botReady && bot) {
+        const slot = message.slot;
+        if (slot >= 0 && slot <= 8) {
+          bot.setQuickBarSlot(slot);
+        }
+      } else if (message.type === 'pick_block' && botReady && bot) {
+        const { x, y, z } = message.block;
+        const block = bot.blockAt(new Vec3(x, y, z));
+        if (block && block.name !== 'air') {
+          // Creative pick-block: put this block type in the current hotbar slot
+          const item = bot.registry.itemsByName[block.name];
+          if (item) {
+            bot.creative.setInventorySlot(36 + bot.quickBarSlot, { type: item.id, count: 1, metadata: 0 })
+              .then(() => broadcastHotbar())
+              .catch(e => console.warn('pick_block failed:', e.message));
+          }
+        }
+      } else if (message.type === 'place_block' && botReady && bot) {
+        const { x, y, z } = message.block;
+        const targetBlock = bot.blockAt(new Vec3(x, y, z));
+        if (targetBlock) {
+          bot.placeBlock(targetBlock, new Vec3(0, 1, 0))
+            .catch(e => console.warn('place_block failed:', e.message));
+        }
+      } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages
         // are not blocked behind a bulk chunk send (4 chunks per setImmediate tick).
         const coords = message.chunks.slice();

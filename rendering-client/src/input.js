@@ -17,6 +17,10 @@ export class InputHandler {
     this._flyToggle = false;     // one-shot: true for one send cycle after double-tap Space
     this._lastSpaceTap = 0;      // timestamp of last Space keydown leading edge
     this._breakPending = false;  // one-shot: left-click while locked → break targeted block
+    this._pickPending = false;   // one-shot: middle-click → pick block into hotbar
+    this._placePending = false;  // one-shot: right-click → place held block
+    this.selectedSlot = 0;       // 0–8, mirrored locally for immediate UI feedback
+    this._slotChanged = false;   // one-shot: slot selection changed
 
     this.controls = {
       forward: false,
@@ -75,6 +79,25 @@ export class InputHandler {
         return;
       }
       if (e.button === 0) this._breakPending = true;
+      if (e.button === 1) { e.preventDefault(); this._pickPending = true; }
+      if (e.button === 2) this._placePending = true;
+    });
+
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.addEventListener('wheel', (e) => {
+      if (!this.isPointerLocked) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      this.selectedSlot = (this.selectedSlot + dir + 9) % 9;
+      this._slotChanged = true;
+    }, { passive: true });
+
+    document.addEventListener('keydown', (e) => {
+      const n = parseInt(e.key);
+      if (n >= 1 && n <= 9) {
+        this.selectedSlot = n - 1;
+        this._slotChanged = true;
+      }
     });
 
     document.addEventListener('click', (e) => {
@@ -113,7 +136,13 @@ export class InputHandler {
     if (flyToggle) this.controls.jump = false;
     const breakBlock = this._breakPending;
     this._breakPending = false;
-    return { ...this.controls, flyToggle, breakBlock };
+    const pickBlock = this._pickPending;
+    this._pickPending = false;
+    const placeBlock = this._placePending;
+    this._placePending = false;
+    const slotChanged = this._slotChanged;
+    this._slotChanged = false;
+    return { ...this.controls, flyToggle, breakBlock, pickBlock, placeBlock, slotChanged, selectedSlot: this.selectedSlot };
   }
 
   getMCYaw() {

@@ -90,6 +90,16 @@
       margin: 5px 0;
     }
 
+    #hotbar {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 4px;
+      z-index: 100;
+    }
+
     #crosshair {
       position: absolute;
       top: 50%;
@@ -112,6 +122,7 @@
 <body>
   <div id="canvas"></div>
   <div id="crosshair"></div>
+  <div id="hotbar"></div>
 
   <div id="status">Connecting...</div>
 
