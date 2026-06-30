@@ -463,8 +463,8 @@ function updateMetrics() {
     }).join('<br>');
   }
 
-  el.innerHTML = statsHtml.replace(/^<br>/, '') + tabBarHtml + tabContentHtml +
-    `<br><br><button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
+  const copyBtnHtml = `<button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
+  el.innerHTML = copyBtnHtml + '<br><br>' + statsHtml.replace(/^<br>/, '') + tabBarHtml + tabContentHtml;
 
   // Tab switching
   el.querySelectorAll('[data-tab]').forEach(btn => {
