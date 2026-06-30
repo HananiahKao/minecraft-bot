@@ -12,9 +12,8 @@ let renderer = null;
 let inputHandler = null;
 let connection = null;
 let totalChunksLoaded = 0;
-let lastInputSendTime = 0;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
-const CHUNK_RENDER_RADIUS = 8;  // keep chunks within this many chunks of bot
+const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 const CHUNKS_PER_FRAME = 1;     // max chunks to build geometry for per frame
 let lastBotChunkX = null;
 let lastBotChunkZ = null;
@@ -40,6 +39,13 @@ function init() {
     console.error('Failed to connect:', err.message);
     updateStatus('Connection failed. Retrying...');
   });
+
+  // Decouple input from render loop — fires at steady 20Hz regardless of fps
+  setInterval(() => {
+    if (connection && connection.isConnected && inputHandler) {
+      connection.sendPlayerInput(inputHandler.getControls(), inputHandler.getMCYaw(), inputHandler.getMCPitch());
+    }
+  }, INPUT_SEND_INTERVAL);
 
   startUpdateLoop();
 }
@@ -93,6 +99,8 @@ let _maxFrameTime = 0;
 let _idleFrameSum = 0, _idleFrameCount = 0;
 let _mouseFrameSum = 0, _mouseFrameCount = 0;
 const MOUSE_ACTIVE_WINDOW = 100; // ms — frame counts as mouse-active if moved within this window
+const MOUSE_LO_RES_WINDOW = 200; // ms — keep pixel ratio low for this long after last mouse move
+let _isLoRes = false;
 
 // Metrics tracking — accumulated
 const _chunkBuildTimes = [];
@@ -135,6 +143,18 @@ function startUpdateLoop() {
     }
     _lastRafTimestamp = timestamp;
     if (inputHandler) inputHandler.applyMouseLook();
+
+    // Dynamic pixel ratio: drop to 0.5 during mouse movement to reduce GPU fragment load
+    if (renderer) {
+      const mouseActive = inputHandler && (timestamp - inputHandler.lastMouseMoveTime) < MOUSE_LO_RES_WINDOW;
+      if (mouseActive && !_isLoRes) {
+        renderer.setPixelRatio(0.5);
+        _isLoRes = true;
+      } else if (!mouseActive && _isLoRes) {
+        renderer.setPixelRatio(window.devicePixelRatio);
+        _isLoRes = false;
+      }
+    }
     requestAnimationFrame(loop);
 
     // Parse raw chunk JSON (deferred from onmessage to avoid blocking input)
@@ -184,15 +204,7 @@ function startUpdateLoop() {
     renderer.render();
     const _dt_render = performance.now() - _t_render;
 
-    const _dt_input = (() => {
-      const t = performance.now();
-      const now = Date.now();
-      if (connection && connection.isConnected && now - lastInputSendTime >= INPUT_SEND_INTERVAL) {
-        connection.sendPlayerInput(inputHandler.getControls(), inputHandler.getMCYaw(), inputHandler.getMCPitch());
-        lastInputSendTime = now;
-      }
-      return performance.now() - t;
-    })();
+    const _dt_input = 0;
 
     const _frameTotal = performance.now() - _frameStart;
     _frameCount++;

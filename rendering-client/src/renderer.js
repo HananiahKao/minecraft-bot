@@ -390,6 +390,8 @@ export class MinecraftRenderer {
   setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }
   getCameraPosition() { return { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z }; }
 
+  setPixelRatio(ratio) { this.renderer.setPixelRatio(ratio); }
+
   render() { this.renderer.render(this.scene, this.camera); }
 
   onWindowResize() {
