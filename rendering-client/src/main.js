@@ -81,6 +81,11 @@ function onBotReady(position) {
   console.log('🤖 Bot ready at', position);
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
   updateStatus(`🎮 Playing | Chunks: ${totalChunksLoaded}`);
+  const cx = Math.floor(position[0] / 16);
+  const cz = Math.floor(position[2] / 16);
+  lastBotChunkX = cx;
+  lastBotChunkZ = cz;
+  requestMissingChunks(cx, cz);
 }
 
 function onBotPosition(position) {
@@ -122,7 +127,18 @@ function onBotPosition(position) {
     lastBotChunkX = cx;
     lastBotChunkZ = cz;
     scheduleUnloadDistantChunks(cx, cz);
+    requestMissingChunks(cx, cz);
   }
+}
+
+function requestMissingChunks(cx, cz) {
+  const needed = [];
+  for (let x = cx - CHUNK_RENDER_RADIUS; x <= cx + CHUNK_RENDER_RADIUS; x++) {
+    for (let z = cz - CHUNK_RENDER_RADIUS; z <= cz + CHUNK_RENDER_RADIUS; z++) {
+      if (!renderer.chunkMeshes.has(`${x},${z}`)) needed.push({ x, z });
+    }
+  }
+  if (needed.length > 0) connection.send({ type: 'request_chunks', chunks: needed });
 }
 
 function scheduleUnloadDistantChunks(botChunkX, botChunkZ) {

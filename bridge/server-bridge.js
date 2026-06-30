@@ -69,8 +69,6 @@ function initBot() {
     requestChunksAround(bot.entity.position);
 
     // Stream bot position and trigger chunk updates as bot crosses chunk boundaries
-    let lastChunkX = Math.floor(bot.entity.position.x / 16);
-    let lastChunkZ = Math.floor(bot.entity.position.z / 16);
     if (positionBroadcastInterval) clearInterval(positionBroadcastInterval);
     positionBroadcastInterval = setInterval(() => {
       if (!bot || !bot.entity) return;
@@ -79,14 +77,6 @@ function initBot() {
           type: 'bot_position',
           position: bot.entity.position.toArray()
         });
-      }
-      // When bot crosses into a new chunk, broadcast all loaded chunks in radius
-      const cx = Math.floor(bot.entity.position.x / 16);
-      const cz = Math.floor(bot.entity.position.z / 16);
-      if (cx !== lastChunkX || cz !== lastChunkZ) {
-        lastChunkX = cx;
-        lastChunkZ = cz;
-        if (connectedClients.length > 0) requestChunksAround(bot.entity.position);
       }
     }, 50);
   });
@@ -237,7 +227,14 @@ wss.on('connection', (ws) => {
     try {
       const message = JSON.parse(data);
 
-      if (message.type === 'player_input' && botReady && bot && bot.entity) {
+      if (message.type === 'request_chunks' && botReady && bot && bot.world) {
+        for (const { x, z } of message.chunks) {
+          try {
+            const col = bot.world.getColumn(x, z);
+            if (col) broadcastChunk(x, z, col);
+          } catch (e) {}
+        }
+      } else if (message.type === 'player_input' && botReady && bot && bot.entity) {
         const { controls, yaw, pitch } = message;
         const isCreative = bot.game && bot.game.gameMode === 'creative';
 
