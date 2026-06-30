@@ -134,22 +134,27 @@ function startUpdateLoop() {
     }
     const _dt_unload = performance.now() - _t_unload;
 
-    // Then add new chunks (expensive: builds geometry)
-    const _t_add = performance.now();
+    // Enqueue new chunks (stores blocks + marks region dirty, no geometry yet)
     for (let i = 0; i < CHUNKS_PER_FRAME && chunkQueue.length > 0; i++) {
       const chunkData = chunkQueue.shift();
       try {
-        const result = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
-        if (result) {
+        const queued = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
+        if (queued) {
           totalChunksLoaded++;
-          _chunkBuildTimes.push(result.buildMs);
-          _totalVertices += result.vertexCount;
           if (!_loadPhaseStart) _loadPhaseStart = performance.now();
           _loadPhaseRecorded = false;
         }
       } catch (e) {
-        console.error('Failed to render chunk:', e.message);
+        console.error('Failed to enqueue chunk:', e.message);
       }
+    }
+
+    // Flush one dirty region per frame (builds merged geometry for all chunks in it)
+    const _t_add = performance.now();
+    const regionResult = renderer.flushDirtyRegions();
+    if (regionResult) {
+      _chunkBuildTimes.push(regionResult.buildMs);
+      _totalVertices = regionResult.vertexCount;
     }
     const _dt_add = performance.now() - _t_add;
 
@@ -238,7 +243,7 @@ function updateMetrics() {
     `fps min: ${minFpsStr}  cur: ${_currentFps}\n` +
     `violations (>33ms): ${violationPct}%\n` +
     `vertices: ${vertStr}\n` +
-    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}`;
+    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}  regions (draw calls): ${renderer ? renderer._regionMeshes.size : 0}`;
 
   el.innerHTML =
     `<b>Chunk Build</b><br>` +
@@ -251,7 +256,7 @@ function updateMetrics() {
     `fps min: ${minFpsStr}&nbsp;&nbsp;cur: ${_currentFps}<br>` +
     `violations (&gt;33ms): ${violationPct}%<br>` +
     `vertices: ${vertStr}<br>` +
-    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}<br>` +
+    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}&nbsp;&nbsp;regions (draw calls): ${renderer ? renderer._regionMeshes.size : 0}<br>` +
     `<br><button id="metrics-copy" style="margin-top:4px;padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
 
   const btn = document.getElementById('metrics-copy');

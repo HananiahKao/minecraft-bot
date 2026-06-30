@@ -283,6 +283,14 @@ function makeGeometry(data) {
   return geo;
 }
 
+const REGION_SIZE = 4; // chunks per region axis — region (rx,rz) covers cx ∈ [4rx, 4rx+3]
+
+function regionKey(cx, cz) {
+  const rx = Math.floor(cx / REGION_SIZE);
+  const rz = Math.floor(cz / REGION_SIZE);
+  return `${rx},${rz}`;
+}
+
 export class MinecraftRenderer {
   constructor(container) {
     this.container = container;
@@ -301,7 +309,14 @@ export class MinecraftRenderer {
 
     this.setupLighting();
 
-    this.chunkMeshes = new Map(); // key → THREE.Mesh
+    // chunk key → blocks array (source of truth)
+    this._chunkBlocks = new Map();
+    // region key → THREE.Mesh
+    this._regionMeshes = new Map();
+    // regions pending a geometry rebuild
+    this._dirtyRegions = new Set();
+    // expose chunk count for metrics compatibility
+    this.chunkMeshes = this._chunkBlocks; // same .size semantics
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
@@ -314,28 +329,62 @@ export class MinecraftRenderer {
     this.scene.add(sun);
   }
 
+  _rebuildRegion(rkey) {
+    // Collect geometry from every loaded chunk in this region
+    const positions = [], normals = [], colors = [];
+    for (const [ckey, blocks] of this._chunkBlocks) {
+      if (regionKey(...ckey.split(',').map(Number)) !== rkey) continue;
+      const [cx, cz] = ckey.split(',').map(Number);
+      const data = buildChunkArrays(cx, cz, blocks);
+      if (!data) continue;
+      positions.push(...data.positions);
+      normals.push(...data.normals);
+      colors.push(...data.colors);
+    }
+
+    // Remove old region mesh
+    const old = this._regionMeshes.get(rkey);
+    if (old) { this.scene.remove(old); old.geometry.dispose(); }
+
+    if (positions.length === 0) { this._regionMeshes.delete(rkey); return 0; }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(new Float32Array(normals),   3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(colors),    3));
+    const mesh = new THREE.Mesh(geo, CHUNK_MATERIAL);
+    this.scene.add(mesh);
+    this._regionMeshes.set(rkey, mesh);
+    return positions.length / 3;
+  }
+
   addChunk(chunkX, chunkZ, blocks) {
     const key = `${chunkX},${chunkZ}`;
-    if (this.chunkMeshes.has(key)) return null;
-
-    const t0 = performance.now();
-    const data = buildChunkArrays(chunkX, chunkZ, blocks);
-    if (!data) return null;
-
-    const mesh = new THREE.Mesh(makeGeometry(data), CHUNK_MATERIAL);
-    this.scene.add(mesh);
-    this.chunkMeshes.set(key, mesh);
-    return { buildMs: performance.now() - t0, vertexCount: data.positions.length / 3 };
+    if (this._chunkBlocks.has(key)) return null;
+    this._chunkBlocks.set(key, blocks);
+    this._dirtyRegions.add(regionKey(chunkX, chunkZ));
+    return true; // actual build happens in flushDirtyRegions()
   }
 
   removeChunk(chunkX, chunkZ) {
     const key = `${chunkX},${chunkZ}`;
-    const mesh = this.chunkMeshes.get(key);
-    if (mesh) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-    }
-    this.chunkMeshes.delete(key);
+    if (!this._chunkBlocks.has(key)) return;
+    this._chunkBlocks.delete(key);
+    this._dirtyRegions.add(regionKey(chunkX, chunkZ));
+  }
+
+  // Call once per frame — rebuilds at most one dirty region per call
+  flushDirtyRegions() {
+    if (this._dirtyRegions.size === 0) return null;
+    const t0 = performance.now();
+    const rkey = this._dirtyRegions.values().next().value;
+    this._dirtyRegions.delete(rkey);
+    const vertexCount = this._rebuildRegion(rkey);
+    // Current total vertices across all region meshes
+    let totalVerts = 0;
+    for (const mesh of this._regionMeshes.values())
+      totalVerts += mesh.geometry.attributes.position.count;
+    return { buildMs: performance.now() - t0, vertexCount: totalVerts };
   }
 
   setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }
