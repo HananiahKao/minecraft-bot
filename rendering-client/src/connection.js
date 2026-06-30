@@ -27,17 +27,9 @@ export class BridgeConnection {
           resolve();
         };
 
+        // All messages deferred to frame loop — never parse on the onmessage interrupt
         this.ws.onmessage = (event) => {
-          // Chunk data is large — defer JSON.parse to frame loop to avoid blocking input
-          if (event.data.length > 500) {
-            if (this.onRawChunk) this.onRawChunk(event.data);
-            return;
-          }
-          try {
-            this.handleMessage(JSON.parse(event.data));
-          } catch (e) {
-            console.error('Failed to parse message:', e.message);
-          }
+          if (this.onRawChunk) this.onRawChunk(event.data);
         };
 
         this.ws.onerror = (error) => {

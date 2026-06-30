@@ -211,13 +211,31 @@ function startUpdateLoop() {
     }
     requestAnimationFrame(loop);
 
-    // Parse raw chunk JSON (deferred from onmessage to avoid blocking input)
+    // Drain raw message queue — position/ready dispatched immediately, chunks rate-limited
     const _t_parse = performance.now();
-    for (let i = 0; i < CHUNKS_PER_FRAME && rawChunkQueue.length > 0; i++) {
-      try {
-        const msg = JSON.parse(rawChunkQueue.shift());
-        chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
-      } catch (e) {}
+    let chunksThisFrame = 0;
+    let i = 0;
+    while (i < rawChunkQueue.length) {
+      const raw = rawChunkQueue[i];
+      // Chunks are large (>500 bytes) — limit to CHUNKS_PER_FRAME per frame
+      if (raw.length > 500) {
+        if (chunksThisFrame >= CHUNKS_PER_FRAME) { i++; continue; }
+        try {
+          const msg = JSON.parse(raw);
+          chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
+          chunksThisFrame++;
+        } catch (e) {}
+        rawChunkQueue.splice(i, 1);
+      } else {
+        // Small message (position, ready, error) — parse and dispatch now
+        try {
+          const msg = JSON.parse(raw);
+          if (msg.type === 'bot_position') onBotPosition(msg.position);
+          else if (msg.type === 'bot_ready') onBotReady(msg.position);
+          else if (msg.type === 'error') onError(new Error(msg.message));
+        } catch (e) {}
+        rawChunkQueue.splice(i, 1);
+      }
     }
     const _dt_parse = performance.now() - _t_parse;
 
