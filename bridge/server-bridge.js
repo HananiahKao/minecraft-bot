@@ -109,7 +109,7 @@ function initBot() {
         const col = bot.world.getColumn(cx, cz);
         if (col) broadcastChunk(cx, cz, col);
       } catch (e) {}
-    }, 300));
+    }, 100));
   });
 
   bot.on('death', () => {
