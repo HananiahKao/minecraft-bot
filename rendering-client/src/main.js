@@ -86,6 +86,17 @@ let _fpsFrames = 0;
 let _currentFps = 0;
 let _frameBudgetViolations = 0;
 
+// Metrics tracking
+const _chunkBuildTimes = [];   // ms per chunk build
+let _totalVertices = 0;
+let _minFps = Infinity;
+let _loadPhaseStart = null;    // set when first chunk arrives
+let _loadPhaseEnd = null;      // set when queues first drain after loading
+let _loadPhaseRecorded = false;
+let _initialLoadMs = null;
+let _metricsLastUpdate = 0;
+let _sessionStart = performance.now();
+
 function startUpdateLoop() {
   const loop = (timestamp) => {
     const _frameStart = performance.now();
@@ -115,8 +126,14 @@ function startUpdateLoop() {
     for (let i = 0; i < CHUNKS_PER_FRAME && chunkQueue.length > 0; i++) {
       const chunkData = chunkQueue.shift();
       try {
-        const added = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
-        if (added) totalChunksLoaded++;
+        const result = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
+        if (result) {
+          totalChunksLoaded++;
+          _chunkBuildTimes.push(result.buildMs);
+          _totalVertices += result.vertexCount;
+          if (!_loadPhaseStart) _loadPhaseStart = performance.now();
+          _loadPhaseRecorded = false;
+        }
       } catch (e) {
         console.error('Failed to render chunk:', e.message);
       }
@@ -145,10 +162,24 @@ function startUpdateLoop() {
       _currentFps = Math.round(_fpsFrames * 1000 / (_now - _fpsLastTime));
       _fpsFrames = 0;
       _fpsLastTime = _now;
+      if (_currentFps > 0 && _currentFps < _minFps) _minFps = _currentFps;
     }
-    if (_frameTotal > 33) {  // log anything below 30fps
+    if (_frameTotal > 33) {
       _frameBudgetViolations++;
       console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+    }
+
+    // Detect when initial load phase ends (queues drain after receiving chunks)
+    if (_loadPhaseStart && !_loadPhaseRecorded && rawChunkQueue.length === 0 && chunkQueue.length === 0) {
+      _loadPhaseEnd = performance.now();
+      _initialLoadMs = _loadPhaseEnd - _loadPhaseStart;
+      _loadPhaseRecorded = true;
+    }
+
+    // Update metrics panel every second
+    if (_now - _metricsLastUpdate >= 1000) {
+      _metricsLastUpdate = _now;
+      updateMetrics();
     }
 
     const fpsStr = `${_currentFps} FPS`;
@@ -161,6 +192,62 @@ function startUpdateLoop() {
   };
 
   requestAnimationFrame(loop);
+}
+
+function updateMetrics() {
+  const el = document.getElementById('metrics');
+  if (!el) return;
+
+  const n = _chunkBuildTimes.length;
+  let avgBuild = 0, maxBuild = 0, p95Build = 0;
+  if (n > 0) {
+    const sum = _chunkBuildTimes.reduce((a, b) => a + b, 0);
+    avgBuild = sum / n;
+    const sorted = [..._chunkBuildTimes].sort((a, b) => a - b);
+    maxBuild = sorted[sorted.length - 1];
+    p95Build = sorted[Math.floor(sorted.length * 0.95)];
+  }
+
+  const violationPct = _frameCount > 0 ? (_frameBudgetViolations / _frameCount * 100).toFixed(1) : '0.0';
+  const minFpsStr = _minFps === Infinity ? '—' : _minFps;
+  const loadStr = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
+  const vertStr = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
+
+  const plainText =
+    `Chunk Build\n` +
+    `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms\n` +
+    `max: ${maxBuild.toFixed(1)}ms  n=${n}\n\n` +
+    `Load Phase\n` +
+    `initial: ${loadStr}\n\n` +
+    `Rendering\n` +
+    `fps min: ${minFpsStr}  cur: ${_currentFps}\n` +
+    `violations: ${violationPct}%\n` +
+    `vertices: ${vertStr}\n` +
+    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}`;
+
+  el.innerHTML =
+    `<b>Chunk Build</b><br>` +
+    `avg: ${avgBuild.toFixed(1)}ms&nbsp;&nbsp;p95: ${p95Build.toFixed(1)}ms<br>` +
+    `max: ${maxBuild.toFixed(1)}ms&nbsp;&nbsp;n=${n}<br>` +
+    `<br><b>Load Phase</b><br>` +
+    `initial: ${loadStr}<br>` +
+    `<br><b>Rendering</b><br>` +
+    `fps min: ${minFpsStr}&nbsp;&nbsp;cur: ${_currentFps}<br>` +
+    `violations: ${violationPct}%<br>` +
+    `vertices: ${vertStr}<br>` +
+    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}<br>` +
+    `<br><button id="metrics-copy" style="margin-top:4px;padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
+
+  const btn = document.getElementById('metrics-copy');
+  if (btn) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(plainText).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      });
+    };
+  }
 }
 
 function updateStatus(message) {

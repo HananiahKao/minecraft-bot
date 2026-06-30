@@ -60,7 +60,8 @@ export class InputHandler {
       this.camera.quaternion.setFromEuler(this.euler);
     });
 
-    document.addEventListener('click', () => {
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('#metrics')) return;
       document.body.requestPointerLock();
     });
 

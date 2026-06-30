@@ -316,15 +316,16 @@ export class MinecraftRenderer {
 
   addChunk(chunkX, chunkZ, blocks) {
     const key = `${chunkX},${chunkZ}`;
-    if (this.chunkMeshes.has(key)) return false;
+    if (this.chunkMeshes.has(key)) return null;
 
+    const t0 = performance.now();
     const data = buildChunkArrays(chunkX, chunkZ, blocks);
-    if (!data) return false;
+    if (!data) return null;
 
     const mesh = new THREE.Mesh(makeGeometry(data), CHUNK_MATERIAL);
     this.scene.add(mesh);
     this.chunkMeshes.set(key, mesh);
-    return true;
+    return { buildMs: performance.now() - t0, vertexCount: data.positions.length / 3 };
   }
 
   removeChunk(chunkX, chunkZ) {
