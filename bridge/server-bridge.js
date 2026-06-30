@@ -34,9 +34,6 @@ let connectedClients = [];
 let botReady = false;
 let positionBroadcastInterval = null;
 
-// Creative flight: track last jump keydown time for double-tap-Space toggle
-let lastJumpPressTime = 0;
-let prevJumpState = false;
 
 function initBot() {
   console.log(`🤖 Connecting to ${MINECRAFT_HOST}:${MINECRAFT_PORT} as "${BOT_USERNAME}"...`);
@@ -101,8 +98,6 @@ function initBot() {
     botReady = false;
     // Stop all movement on death and reset flight state
     stopAllControls();
-    lastJumpPressTime = 0;
-    prevJumpState = false;
     setTimeout(() => {
       try {
         bot.respawn();
@@ -239,20 +234,9 @@ wss.on('connection', (ws) => {
         const isCreative = bot.game && bot.game.gameMode === 'creative';
 
         if (isCreative) {
-          // Double-tap Space to toggle flight (matches vanilla Minecraft behaviour).
-          // The client sends jump=true every tick while Space is held; we only act
-          // on the leading edge (false→true transition) so holding Space doesn't
-          // spam the toggle.
-          const jumpNow = !!controls.jump;
-          if (jumpNow && !prevJumpState) {
-            const now = Date.now();
-            if (now - lastJumpPressTime < 250) {
-              // Double-tap: toggle isFlying
-              bot.entity.isFlying = !bot.entity.isFlying;
-            }
-            lastJumpPressTime = now;
-          }
-          prevJumpState = jumpNow;
+          // flyToggle is a one-shot signal from the client, set on double-tap Space
+          // keydown (browser keydown fires once per physical press, no repeat ambiguity)
+          if (controls.flyToggle) bot.entity.isFlying = !bot.entity.isFlying;
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
           // Horizontal controls and sprint work the same as on the ground.

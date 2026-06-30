@@ -14,6 +14,8 @@ export class InputHandler {
     this.lastMouseMoveTime = 0;
     this._pendingDX = 0;   // accumulated mouse delta since last applyMouseLook()
     this._pendingDY = 0;
+    this._flyToggle = false;     // one-shot: true for one send cycle after double-tap Space
+    this._lastSpaceTap = 0;      // timestamp of last Space keydown leading edge
 
     this.controls = {
       forward: false,
@@ -44,6 +46,12 @@ export class InputHandler {
       if (control) {
         this.controls[control] = true;
         e.preventDefault();
+      }
+      // Double-tap Space detection on leading edge (keydown only fires once until keyup)
+      if (e.key === ' ' && !e.repeat) {
+        const now = performance.now();
+        if (now - this._lastSpaceTap < 300) this._flyToggle = true;
+        this._lastSpaceTap = now;
       }
     });
 
@@ -89,7 +97,11 @@ export class InputHandler {
     Object.keys(this.controls).forEach(k => this.controls[k] = false);
   }
 
-  getControls() { return this.controls; }
+  getControls() {
+    const flyToggle = this._flyToggle;
+    this._flyToggle = false; // consume — sent once per double-tap
+    return { ...this.controls, flyToggle };
+  }
 
   getMCYaw() {
     this.euler.setFromQuaternion(this.camera.quaternion);
