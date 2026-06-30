@@ -286,9 +286,15 @@ function startUpdateLoop() {
     let sent = 0;
     while (chunkQueue.length > 0 && sent < 4) {
       const { x, z, blocks } = chunkQueue.shift();
-      // If chunk is already loaded (not just pending), this is a live update — force replace
-      if (renderer.chunkMeshes.has(`${x},${z}`)) renderer.removeChunk(x, z);
-      if (renderer.reserveChunk(x, z)) { worker.postMessage({ x, z, blocks }); sent++; }
+      const key = `${x},${z}`;
+      let reserved = false;
+      if (renderer.chunkMeshes.has(key)) {
+        // Live update — old mesh stays visible until worker returns new geometry
+        reserved = renderer.reserveUpdate(x, z);
+      } else {
+        reserved = renderer.reserveChunk(x, z);
+      }
+      if (reserved) { worker.postMessage({ x, z, blocks }); sent++; }
     }
     const _dt_add = performance.now() - _t_add;
 

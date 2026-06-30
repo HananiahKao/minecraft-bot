@@ -40,8 +40,10 @@ export class MinecraftRenderer {
 
     // key "x,z" → THREE.Mesh (loaded chunks)
     this.chunkMeshes = new Map();
-    // key "x,z" → true (sent to worker, geometry not yet received)
+    // key "x,z" → in-flight to worker (initial load or update)
     this._pending = new Set();
+    // key "x,z" → THREE.Mesh being replaced — stays in scene until applyChunkGeometry swaps it
+    this._updating = new Map();
 
     this._raycaster = new THREE.Raycaster();
     this._raycaster.near = 0.1;
@@ -73,14 +75,28 @@ export class MinecraftRenderer {
     return true;
   }
 
+  // Queue a live update for an already-loaded chunk. Old mesh stays visible until swap.
+  // Returns false if an update is already in flight for this chunk.
+  reserveUpdate(chunkX, chunkZ) {
+    const key = `${chunkX},${chunkZ}`;
+    if (this._pending.has(key)) return false; // already rebuilding
+    const existing = this.chunkMeshes.get(key);
+    if (existing) {
+      this._updating.set(key, existing); // keep visible in scene
+      this.chunkMeshes.delete(key);
+    }
+    this._pending.add(key);
+    return true;
+  }
+
   // Called from worker onmessage — creates mesh from pre-built typed arrays.
   applyChunkGeometry(chunkX, chunkZ, positions, normals, colors) {
     const key = `${chunkX},${chunkZ}`;
     this._pending.delete(key);
 
-    // Remove stale mesh if chunk was re-sent (e.g. after unload + reload)
-    const old = this.chunkMeshes.get(key);
-    if (old) { this.scene.remove(old); old.geometry.dispose(); }
+    // Remove old mesh — either a live-update placeholder or a stale loaded mesh
+    const old = this._updating.get(key) || this.chunkMeshes.get(key);
+    if (old) { this.scene.remove(old); old.geometry.dispose(); this._updating.delete(key); }
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
