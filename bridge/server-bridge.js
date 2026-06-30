@@ -54,36 +54,6 @@ function initBot() {
     console.log(`[abilities←server] flags=0x${packet.flags.toString(16).padStart(2,'0')} flying=${flying} canFly=${canFly} instabuild=${instabuild} flySpeed=${packet.flyingSpeed} walkSpeed=${packet.walkingSpeed}`);
   });
 
-  // ── Creative-flight physics patch ──────────────────────────────────────────
-  // prismarine-physics has NO creative-flight logic.  Its "Normal movement"
-  // branch always runs `vel.y -= gravity` — there is no isFlying check anywhere
-  // in the codebase.  Setting bot.physicsEnabled=false stops gravity but also
-  // stops position packets, so the bot freezes.
-  //
-  // Fix: listen to 'physicsTick', which fires immediately after
-  //   physics.simulatePlayer(...).apply(bot)
-  // so we can rewrite vel and pos before updatePosition() sends the packet.
-  //
-  // When bot.entity.isFlying:
-  //   • Zero vel.y to drain any gravity that just accumulated.
-  //   • Apply a fixed vertical step based on jump/sneak control state so
-  //     Space ascends and Shift descends at a predictable speed.
-  //   • Leave vel.x/vel.z alone — prismarine-physics already handled WASD
-  //     horizontal movement correctly via applyHeading().
-  const FLY_VERTICAL_SPEED = 0.15; // blocks per tick (~3 blocks/sec)
-
-  bot.on('physicsTick', () => {
-    if (!bot.entity || !bot.entity.isFlying) return;
-    // Kill gravity that simulatePlayer just applied
-    bot.entity.velocity.y = 0;
-    // Apply vertical intent from control state
-    if (bot.getControlState('jump')) {
-      bot.entity.position.y += FLY_VERTICAL_SPEED;
-    } else if (bot.getControlState('sneak')) {
-      bot.entity.position.y -= FLY_VERTICAL_SPEED;
-    }
-  });
-
   bot.on('spawn', () => {
     console.log('✅ Bot spawned!');
     console.log(`📍 Position: ${bot.entity.position.toString()}`);
@@ -277,15 +247,18 @@ wss.on('connection', (ws) => {
           // Bit layout: 0x01=invulnerable, 0x02=flying, 0x04=canFly, 0x08=instabuild.
           // When enabling flight we must set both flying (0x02) AND canFly (0x04) = 0x06,
           // otherwise the server ignores the flying flag.
-          // We also disable prismarine-physics while airborne so the local gravity
-          // simulation doesn't fight the server's creative-flight position updates.
+
           if (controls.flyToggle) {
             const nowFlying = !bot.entity.isFlying;
-            console.log(`[fly] toggle → nowFlying=${nowFlying} gameMode=${bot.game.gameMode} flags=0x${nowFlying ? '06' : '00'}`);
-            // flags: i8 only — no flyingSpeed/walkingSpeed in this direction
+            console.log(`[fly] toggle → nowFlying=${nowFlying}`);
+            // abilities packet: flags i8 only (1.19.4 client→server direction).
+            // 0x02=flying, 0x04=canFly — both required to enable flight.
             bot._client.write('abilities', { flags: nowFlying ? 0x06 : 0x00 });
             bot.entity.isFlying = nowFlying;
-            console.log(`[fly] isFlying=${bot.entity.isFlying}`);
+            // bot.creative.startFlying/stopFlying zero bot.physics.gravity so
+            // prismarine-physics stops applying gravity on subsequent ticks.
+            if (nowFlying) bot.creative.startFlying();
+            else bot.creative.stopFlying();
           }
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
