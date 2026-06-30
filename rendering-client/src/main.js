@@ -26,12 +26,17 @@ const EVENT_MAX = 100;
 const _events = [];
 let _activeTab = 'snaps'; // 'snaps' | 'events'
 
+function wallClock() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
 function logEvent(type, data) {
   const t = ((performance.now() - _sessionStart) / 1000).toFixed(2);
   const entry = { t, type, ...data };
   _events.push(entry);
   if (_events.length > EVENT_MAX) _events.shift();
-  let msg = `[EVENT +${t}s] ${type}`;
+  let msg = `[EVENT ${wallClock()} +${t}s] ${type}`;
   for (const [k, v] of Object.entries(data)) msg += ` ${k}=${v}`;
   console.log(msg);
 }
@@ -287,7 +292,7 @@ function startUpdateLoop() {
       if (_currentFps > 0 && _currentFps < _minFps) _minFps = _currentFps;
     }
     if (_frameTotal > 33) {
-      console.log(`[FRAME-CPU] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+      console.log(`[FRAME-CPU ${wallClock()}] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
     // Detect when initial load phase ends (queues drain after receiving chunks)
@@ -312,7 +317,7 @@ function startUpdateLoop() {
       };
       _snapshots.push(snap);
       if (_snapshots.length > SNAPSHOT_COUNT) _snapshots.shift();
-      console.log(`[SNAP +${snap.t}s] fps=${snap.fps} idle=${snap.idleMs}ms mouse=${snap.mouseMs}ms viol=${snap.violPct}% chunks=${snap.chunks} dirty=${snap.dirty}`);
+      console.log(`[SNAP ${wallClock()} +${snap.t}s] fps=${snap.fps} idle=${snap.idleMs}ms mouse=${snap.mouseMs}ms viol=${snap.violPct}% chunks=${snap.chunks} dirty=${snap.dirty}`);
       // Reset accumulators
       _snapIdleSum = 0; _snapIdleCount = 0;
       _snapMouseSum = 0; _snapMouseCount = 0;
