@@ -13,7 +13,6 @@ let inputHandler = null;
 let connection = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
-const CHUNKS_PER_FRAME = 1;     // max chunks to build geometry for per frame
 let lastBotChunkX = null;
 let lastBotChunkZ = null;
 const rawChunkQueue = [];       // raw JSON strings — parsed lazily in frame loop
@@ -60,6 +59,18 @@ function init() {
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
+
+  // Geometry worker — builds Float32Arrays off the main thread
+  const worker = new Worker('/src/chunk-worker.js');
+  worker.onmessage = ({ data }) => {
+    if (data.empty) return;
+    const t0 = performance.now();
+    renderer.applyChunkGeometry(data.x, data.z, data.positions, data.normals, data.colors);
+    _chunkBuildTimes.push(performance.now() - t0);
+    _totalVertices = renderer.totalVertices;
+    if (!_loadPhaseStart) _loadPhaseStart = performance.now();
+    _loadPhaseRecorded = false;
+  };
 
   connection.connect().catch((err) => {
     console.error('Failed to connect:', err.message);
@@ -233,17 +244,13 @@ function startUpdateLoop() {
 
     // Drain raw message queue — position/ready dispatched immediately, chunks rate-limited
     const _t_parse = performance.now();
-    let chunksThisFrame = 0;
     let i = 0;
     while (i < rawChunkQueue.length) {
       const raw = rawChunkQueue[i];
-      // Chunks are large (>500 bytes) — limit to CHUNKS_PER_FRAME per frame
       if (raw.length > 500) {
-        if (chunksThisFrame >= CHUNKS_PER_FRAME) { i++; continue; }
         try {
           const msg = JSON.parse(raw);
           chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
-          chunksThisFrame++;
         } catch (e) {}
         rawChunkQueue.splice(i, 1);
       } else {
@@ -259,34 +266,19 @@ function startUpdateLoop() {
     }
     const _dt_parse = performance.now() - _t_parse;
 
-    // Drain unload queue first (cheap: just dispose + remove from scene)
+    // Drain unload queue (cheap: dispose + remove from scene)
     const _t_unload = performance.now();
-    for (let i = 0; i < CHUNKS_PER_FRAME && unloadQueue.length > 0; i++) {
+    while (unloadQueue.length > 0) {
       const [kx, kz] = unloadQueue.shift();
       renderer.removeChunk(kx, kz);
     }
     const _dt_unload = performance.now() - _t_unload;
 
-    // Enqueue new chunks (stores blocks + marks region dirty, no geometry yet)
-    for (let i = 0; i < CHUNKS_PER_FRAME && chunkQueue.length > 0; i++) {
-      const chunkData = chunkQueue.shift();
-      try {
-        const queued = renderer.addChunk(chunkData.x, chunkData.z, chunkData.blocks);
-        if (queued) {
-          if (!_loadPhaseStart) _loadPhaseStart = performance.now();
-          _loadPhaseRecorded = false;
-        }
-      } catch (e) {
-        console.error('Failed to enqueue chunk:', e.message);
-      }
-    }
-
-    // Flush one dirty region per frame (builds merged geometry for all chunks in it)
+    // Send new chunks to geometry worker — postMessage is non-blocking
     const _t_add = performance.now();
-    const regionResult = renderer.flushDirtyRegions();
-    if (regionResult) {
-      _chunkBuildTimes.push(regionResult.buildMs);
-      _totalVertices = regionResult.vertexCount;
+    while (chunkQueue.length > 0) {
+      const { x, z, blocks } = chunkQueue.shift();
+      if (renderer.reserveChunk(x, z)) worker.postMessage({ x, z, blocks });
     }
     const _dt_add = performance.now() - _t_add;
 
@@ -308,8 +300,8 @@ function startUpdateLoop() {
       console.log(`[FRAME-CPU ${wallClock()}] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
-    // Detect when initial load phase ends (queues drain after receiving chunks)
-    if (_loadPhaseStart && !_loadPhaseRecorded && rawChunkQueue.length === 0 && chunkQueue.length === 0) {
+    // Detect when initial load phase ends (all queues and pending worker jobs drained)
+    if (_loadPhaseStart && !_loadPhaseRecorded && rawChunkQueue.length === 0 && chunkQueue.length === 0 && renderer._pending.size === 0) {
       _loadPhaseEnd = performance.now();
       _initialLoadMs = _loadPhaseEnd - _loadPhaseStart;
       _loadPhaseRecorded = true;
@@ -326,11 +318,11 @@ function startUpdateLoop() {
         mouseMs: _snapMouseCount > 0 ? (_snapMouseSum / _snapMouseCount).toFixed(0) : '—',
         violPct: _snapFrames > 0 ? (_snapViolations / _snapFrames * 100).toFixed(0) : '0',
         chunks: renderer ? renderer.chunkMeshes.size : 0,
-        dirty: renderer ? renderer._dirtyRegions.size : 0,
+        pending: renderer ? renderer._pending.size : 0,
       };
       _snapshots.push(snap);
       if (_snapshots.length > SNAPSHOT_COUNT) _snapshots.shift();
-      console.log(`[SNAP ${wallClock()} +${snap.t}s] fps=${snap.fps} idle=${snap.idleMs}ms mouse=${snap.mouseMs}ms viol=${snap.violPct}% chunks=${snap.chunks} dirty=${snap.dirty}`);
+      console.log(`[SNAP ${wallClock()} +${snap.t}s] fps=${snap.fps} idle=${snap.idleMs}ms mouse=${snap.mouseMs}ms viol=${snap.violPct}% chunks=${snap.chunks} pending=${snap.pending}`);
       // Reset accumulators
       _snapIdleSum = 0; _snapIdleCount = 0;
       _snapMouseSum = 0; _snapMouseCount = 0;
@@ -376,10 +368,10 @@ function updateMetrics() {
   const loadStr      = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
   const vertStr      = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
   const chunkCount   = renderer ? renderer.chunkMeshes.size : 0;
-  const regionCount  = renderer ? renderer._regionMeshes.size : 0;
+  const pendingCount = renderer ? renderer._pending.size : 0;
 
   const statsLines = [
-    ['b', 'Chunk Build'],
+    ['b', 'Chunk Build (worker)'],
     ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
     ['',  `max: ${maxBuild.toFixed(1)}ms  n=${n}`],
     ['b', 'Load Phase'],
@@ -390,7 +382,7 @@ function updateMetrics() {
     ['',  `fps min: ${minFpsStr}  cur: ${_currentFps}`],
     ['',  `violations (>33ms): ${violationPct}%`],
     ['',  `vertices: ${vertStr}`],
-    ['',  `chunks: ${chunkCount}  regions (draw calls): ${regionCount}`],
+    ['',  `chunks: ${chunkCount}  pending: ${pendingCount}`],
   ];
 
   // Build bottom section based on active tab
