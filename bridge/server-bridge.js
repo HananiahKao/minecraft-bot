@@ -255,10 +255,7 @@ wss.on('connection', (ws) => {
             // flags: i8 only — no flyingSpeed/walkingSpeed in this direction
             bot._client.write('abilities', { flags: nowFlying ? 0x06 : 0x00 });
             bot.entity.isFlying = nowFlying;
-            // Disable local physics while flying so prismarine-physics gravity doesn't
-            // counteract the server-side creative flight position.
-            bot.physicsEnabled = !nowFlying;
-            console.log(`[fly] physicsEnabled=${bot.physicsEnabled} isFlying=${bot.entity.isFlying}`);
+            console.log(`[fly] isFlying=${bot.entity.isFlying}`);
           }
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
