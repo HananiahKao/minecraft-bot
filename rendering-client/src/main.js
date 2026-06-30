@@ -21,6 +21,28 @@ const rawChunkQueue = [];       // raw JSON strings — parsed lazily in frame l
 const chunkQueue = [];          // parsed chunk objects waiting to be added to scene
 const unloadQueue = [];         // [chunkX, chunkZ] pairs waiting to be removed
 
+// ── Event log ────────────────────────────────────────────────────────────────
+const EVENT_MAX = 100;
+const _events = [];
+let _activeTab = 'snaps'; // 'snaps' | 'events'
+
+function logEvent(type, data) {
+  const t = ((performance.now() - _sessionStart) / 1000).toFixed(2);
+  const entry = { t, type, ...data };
+  _events.push(entry);
+  if (_events.length > EVENT_MAX) _events.shift();
+  let msg = `[EVENT +${t}s] ${type}`;
+  for (const [k, v] of Object.entries(data)) msg += ` ${k}=${v}`;
+  console.log(msg);
+}
+
+// ── Jump detection state ──────────────────────────────────────────────────────
+let _lastBotY = null;
+let _lastYDelta = 0;
+let _jumpStartY = null;
+let _jumpStartTime = null;
+let _jumpPeakTime = null;
+
 function init() {
   const container = document.getElementById('canvas');
   renderer = new MinecraftRenderer(container);
@@ -58,6 +80,36 @@ function onBotReady(position) {
 
 function onBotPosition(position) {
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
+
+  // Jump detection — track Y changes to identify start/peak/land
+  const y = position[1];
+  if (_lastBotY !== null) {
+    const delta = y - _lastBotY;
+    if (Math.abs(delta) > 0.005) {
+      if (_lastYDelta <= 0 && delta > 0.05) {
+        // Rising from ground → jump started
+        _jumpStartY = _lastBotY;
+        _jumpStartTime = performance.now();
+        _jumpPeakTime = null;
+        logEvent('JUMP_START', { y: _lastBotY.toFixed(2), fps: _currentFps });
+      } else if (_jumpStartTime && _jumpPeakTime === null && _lastYDelta > 0 && delta <= 0) {
+        // Was rising, now falling → peak
+        _jumpPeakTime = performance.now();
+        const rise = (_jumpPeakTime - _jumpStartTime).toFixed(0);
+        logEvent('JUMP_PEAK', { y: y.toFixed(2), rise: rise + 'ms', fps: _currentFps });
+      } else if (_jumpStartTime && _jumpPeakTime && _lastYDelta < 0 && delta >= -0.01) {
+        // Was falling, now stopped → landed
+        const dur = (performance.now() - _jumpStartTime).toFixed(0);
+        const flag = parseInt(dur) < 450 ? 'FAST' : parseInt(dur) > 750 ? 'SLOW' : 'ok';
+        logEvent('JUMP_LAND', { y: y.toFixed(2), dur: dur + 'ms', exp: '600ms', flag, fps: _currentFps });
+        _jumpStartTime = null;
+        _jumpPeakTime = null;
+        _jumpStartY = null;
+      }
+      _lastYDelta = delta;
+    }
+  }
+  _lastBotY = y;
 
   const cx = Math.floor(position[0] / 16);
   const cz = Math.floor(position[2] / 16);
@@ -132,6 +184,8 @@ function startUpdateLoop() {
       _frameTimeCount++;
       if (gap > _maxFrameTime) _maxFrameTime = gap;
       if (gap > 33) _frameBudgetViolations++;
+      // Log severe frame drops as events (200ms = ~5fps, clearly pathological)
+      if (gap > 200) logEvent('FRAME_DROP', { gap: gap.toFixed(0) + 'ms', fps: _currentFps });
       const mouseActive = inputHandler && (timestamp - inputHandler.lastMouseMoveTime) < MOUSE_ACTIVE_WINDOW;
       if (mouseActive) { _mouseFrameSum += gap; _mouseFrameCount++; }
       else             { _idleFrameSum  += gap; _idleFrameCount++;  }
@@ -204,8 +258,6 @@ function startUpdateLoop() {
     renderer.render();
     const _dt_render = performance.now() - _t_render;
 
-    const _dt_input = 0;
-
     const _frameTotal = performance.now() - _frameStart;
     _frameCount++;
     _fpsFrames++;
@@ -217,7 +269,7 @@ function startUpdateLoop() {
       if (_currentFps > 0 && _currentFps < _minFps) _minFps = _currentFps;
     }
     if (_frameTotal > 33) {
-      console.log(`[FRAME-CPU] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+      console.log(`[FRAME-CPU] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
     // Detect when initial load phase ends (queues drain after receiving chunks)
@@ -290,8 +342,7 @@ function updateMetrics() {
   const chunkCount   = renderer ? renderer.chunkMeshes.size : 0;
   const regionCount  = renderer ? renderer._regionMeshes.size : 0;
 
-  // Single source of truth — [type, text]; type 'b' = bold header
-  const lines = [
+  const statsLines = [
     ['b', 'Chunk Build'],
     ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
     ['',  `max: ${maxBuild.toFixed(1)}ms  n=${n}`],
@@ -306,32 +357,75 @@ function updateMetrics() {
     ['',  `chunks: ${chunkCount}  regions (draw calls): ${regionCount}`],
   ];
 
-  // Recent snapshots log — newest first
-  const snapLines = _snapshots.length > 0
-    ? [['b', 'Recent (per second)'],
-       ['', 't    fps  idle  mouse  viol% chnk'],
+  // Build bottom section based on active tab
+  const tabSnapsLines = _snapshots.length > 0
+    ? [['', 't    fps  idle  mouse  viol% chnk'],
        ...[..._snapshots].reverse().map(s =>
          ['', `+${String(s.t).padEnd(3)} ${String(s.fps).padEnd(4)} ${String(s.idleMs).padEnd(5)} ${String(s.mouseMs).padEnd(6)} ${String(s.violPct).padEnd(5)} ${s.chunks}`]
        )]
-    : [];
+    : [['', '(no data yet)']];
 
-  const allLines = [...lines, ...snapLines];
-  const plainText = allLines.map(([, text]) => text).join('\n');
-  const html = allLines.map(([type, text]) => {
-    const escaped = text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
-    return type === 'b' ? `<br><b>${escaped}</b>` : escaped;
+  const TYPE_COLOR = { JUMP_START: '#4fc', JUMP_PEAK: '#ff9', JUMP_LAND: '#4fc', FRAME_DROP: '#f66' };
+  const tabEventLines = _events.length > 0
+    ? [..._events].reverse().slice(0, 20).map(e => {
+        const extra = Object.entries(e)
+          .filter(([k]) => k !== 't' && k !== 'type')
+          .map(([k, v]) => `${k}=${v}`).join(' ');
+        return ['ev', e.t, e.type, extra, TYPE_COLOR[e.type] || '#aaa'];
+      })
+    : [['', '', '(no events yet)', '', '#aaa']];
+
+  // Build plain text for copy (stats + whichever tab is active)
+  const activeTabLines = _activeTab === 'snaps' ? tabSnapsLines : tabEventLines.map(([,t,type,extra]) => ['', `+${t}s ${type} ${extra}`]);
+  const allPlainLines = [...statsLines, ...activeTabLines];
+  const plainText = allPlainLines.map(([, text]) => text).join('\n');
+
+  // Build HTML
+  const statsHtml = statsLines.map(([type, text]) => {
+    const esc = text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+    return type === 'b' ? `<br><b>${esc}</b>` : esc;
   }).join('<br>');
 
-  el.innerHTML = html.replace(/^<br>/, '') +
+  const TAB_BTN = (id, label) => {
+    const active = _activeTab === id;
+    return `<button data-tab="${id}" style="padding:1px 7px;font-size:10px;cursor:pointer;font-family:monospace;` +
+      `background:${active ? '#555' : '#222'};color:${active ? '#fff' : '#aaa'};` +
+      `border:1px solid ${active ? '#aaa' : '#444'};border-radius:3px;margin-right:3px">${label}</button>`;
+  };
+
+  const tabBarHtml = `<br><br>${TAB_BTN('snaps', 'Snaps')}${TAB_BTN('events', 'Events')}`;
+
+  let tabContentHtml;
+  if (_activeTab === 'snaps') {
+    tabContentHtml = '<br>' + tabSnapsLines.map(([, text]) => {
+      return text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+    }).join('<br>');
+  } else {
+    tabContentHtml = '<br>' + tabEventLines.map(([, t, type, extra, color]) => {
+      const row = `+${t}s&nbsp;<span style="color:${color}">${type}</span>&nbsp;${extra.replace(/ /g, '&nbsp;')}`;
+      return row;
+    }).join('<br>');
+  }
+
+  el.innerHTML = statsHtml.replace(/^<br>/, '') + tabBarHtml + tabContentHtml +
     `<br><br><button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
 
-  const btn = document.getElementById('metrics-copy');
-  if (btn) {
+  // Tab switching
+  el.querySelectorAll('[data-tab]').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
+      _activeTab = btn.dataset.tab;
+      updateMetrics();
+    };
+  });
+
+  const copyBtn = document.getElementById('metrics-copy');
+  if (copyBtn) {
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
       navigator.clipboard.writeText(plainText).then(() => {
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
       });
     };
   }
