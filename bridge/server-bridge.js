@@ -191,8 +191,8 @@ function broadcastMessage(message) {
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const blocks = [];
-    const Y_MIN = 40;
-    const Y_MAX = 120;
+    const Y_MIN = -64;
+    const Y_MAX = 256;
 
     for (let x = 0; x < 16; x++) {
       for (let z = 0; z < 16; z++) {
