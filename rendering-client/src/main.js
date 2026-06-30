@@ -85,10 +85,14 @@ let _fpsLastTime = performance.now();
 let _fpsFrames = 0;
 let _currentFps = 0;
 let _frameBudgetViolations = 0;
-let _lastRafTimestamp = 0;   // actual wall-clock time of previous rAF callback
-let _frameTimeSum = 0;       // sum of wall-clock inter-frame gaps
+let _lastRafTimestamp = 0;
+let _frameTimeSum = 0;
 let _frameTimeCount = 0;
-let _maxFrameTime = 0;       // worst wall-clock frame gap
+let _maxFrameTime = 0;
+// Separate idle vs mouse-active frame time buckets
+let _idleFrameSum = 0, _idleFrameCount = 0;
+let _mouseFrameSum = 0, _mouseFrameCount = 0;
+const MOUSE_ACTIVE_WINDOW = 100; // ms — frame counts as mouse-active if moved within this window
 
 // Metrics tracking
 const _chunkBuildTimes = [];   // ms per chunk build
@@ -111,6 +115,9 @@ function startUpdateLoop() {
       _frameTimeCount++;
       if (gap > _maxFrameTime) _maxFrameTime = gap;
       if (gap > 33) _frameBudgetViolations++;
+      const mouseActive = inputHandler && (timestamp - inputHandler.lastMouseMoveTime) < MOUSE_ACTIVE_WINDOW;
+      if (mouseActive) { _mouseFrameSum += gap; _mouseFrameCount++; }
+      else             { _idleFrameSum  += gap; _idleFrameCount++;  }
     }
     _lastRafTimestamp = timestamp;
     requestAnimationFrame(loop);
@@ -226,38 +233,40 @@ function updateMetrics() {
   }
 
   const violationPct = _frameTimeCount > 0 ? (_frameBudgetViolations / _frameTimeCount * 100).toFixed(1) : '0.0';
-  const avgFrameMs = _frameTimeCount > 0 ? (_frameTimeSum / _frameTimeCount).toFixed(1) : '—';
-  const maxFrameMs = _maxFrameTime > 0 ? _maxFrameTime.toFixed(1) : '—';
-  const minFpsStr = _minFps === Infinity ? '—' : _minFps;
-  const loadStr = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
-  const vertStr = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
+  const avgFrameMs   = _frameTimeCount  > 0 ? (_frameTimeSum  / _frameTimeCount).toFixed(1) : '—';
+  const maxFrameMs   = _maxFrameTime    > 0 ? _maxFrameTime.toFixed(1) : '—';
+  const idleAvgMs    = _idleFrameCount  > 0 ? (_idleFrameSum  / _idleFrameCount).toFixed(1) : '—';
+  const mouseAvgMs   = _mouseFrameCount > 0 ? (_mouseFrameSum / _mouseFrameCount).toFixed(1) : '—';
+  const minFpsStr    = _minFps === Infinity ? '—' : _minFps;
+  const loadStr      = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
+  const vertStr      = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
+  const chunkCount   = renderer ? renderer.chunkMeshes.size : 0;
+  const regionCount  = renderer ? renderer._regionMeshes.size : 0;
 
-  const plainText =
-    `Chunk Build\n` +
-    `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms\n` +
-    `max: ${maxBuild.toFixed(1)}ms  n=${n}\n\n` +
-    `Load Phase\n` +
-    `initial: ${loadStr}\n\n` +
-    `Rendering\n` +
-    `frame avg: ${avgFrameMs}ms  max: ${maxFrameMs}ms\n` +
-    `fps min: ${minFpsStr}  cur: ${_currentFps}\n` +
-    `violations (>33ms): ${violationPct}%\n` +
-    `vertices: ${vertStr}\n` +
-    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}  regions (draw calls): ${renderer ? renderer._regionMeshes.size : 0}`;
+  // Single source of truth — [type, text]; type 'b' = bold header
+  const lines = [
+    ['b', 'Chunk Build'],
+    ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
+    ['',  `max: ${maxBuild.toFixed(1)}ms  n=${n}`],
+    ['b', 'Load Phase'],
+    ['',  `initial: ${loadStr}`],
+    ['b', 'Rendering'],
+    ['',  `frame avg: ${avgFrameMs}ms  max: ${maxFrameMs}ms`],
+    ['',  `idle avg: ${idleAvgMs}ms  mouse avg: ${mouseAvgMs}ms`],
+    ['',  `fps min: ${minFpsStr}  cur: ${_currentFps}`],
+    ['',  `violations (>33ms): ${violationPct}%`],
+    ['',  `vertices: ${vertStr}`],
+    ['',  `chunks: ${chunkCount}  regions (draw calls): ${regionCount}`],
+  ];
 
-  el.innerHTML =
-    `<b>Chunk Build</b><br>` +
-    `avg: ${avgBuild.toFixed(1)}ms&nbsp;&nbsp;p95: ${p95Build.toFixed(1)}ms<br>` +
-    `max: ${maxBuild.toFixed(1)}ms&nbsp;&nbsp;n=${n}<br>` +
-    `<br><b>Load Phase</b><br>` +
-    `initial: ${loadStr}<br>` +
-    `<br><b>Rendering</b><br>` +
-    `frame avg: ${avgFrameMs}ms&nbsp;&nbsp;max: ${maxFrameMs}ms<br>` +
-    `fps min: ${minFpsStr}&nbsp;&nbsp;cur: ${_currentFps}<br>` +
-    `violations (&gt;33ms): ${violationPct}%<br>` +
-    `vertices: ${vertStr}<br>` +
-    `chunks: ${renderer ? renderer.chunkMeshes.size : 0}&nbsp;&nbsp;regions (draw calls): ${renderer ? renderer._regionMeshes.size : 0}<br>` +
-    `<br><button id="metrics-copy" style="margin-top:4px;padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
+  const plainText = lines.map(([, text]) => text).join('\n');
+  const html = lines.map(([type, text]) => {
+    const escaped = text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+    return type === 'b' ? `<br><b>${escaped}</b>` : escaped;
+  }).join('<br>');
+
+  el.innerHTML = html.replace(/^<br>/, '') +
+    `<br><br><button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
 
   const btn = document.getElementById('metrics-copy');
   if (btn) {

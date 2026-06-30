@@ -11,6 +11,7 @@ export class InputHandler {
     this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
     this.pi2 = Math.PI / 2;
     this.isPointerLocked = false;
+    this.lastMouseMoveTime = 0;   // performance.now() of last mousemove
 
     this.controls = {
       forward: false,
@@ -51,6 +52,7 @@ export class InputHandler {
 
     document.addEventListener('mousemove', (e) => {
       if (!this.isPointerLocked) return;
+      this.lastMouseMoveTime = performance.now();
       const movementX = e.movementX || e.mozMovementX || 0;
       const movementY = e.movementY || e.mozMovementY || 0;
       this.euler.setFromQuaternion(this.camera.quaternion);
