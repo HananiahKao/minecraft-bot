@@ -228,12 +228,22 @@ wss.on('connection', (ws) => {
       const message = JSON.parse(data);
 
       if (message.type === 'request_chunks' && botReady && bot && bot.world) {
-        for (const { x, z } of message.chunks) {
-          try {
-            const col = bot.world.getColumn(x, z);
-            if (col) broadcastChunk(x, z, col);
-          } catch (e) {}
+        // Spread chunk processing over event-loop ticks so player_input messages
+        // are not blocked behind a bulk chunk send (4 chunks per setImmediate tick).
+        const coords = message.chunks.slice();
+        let i = 0;
+        function sendNext() {
+          if (!bot || !bot.world || connectedClients.length === 0) return;
+          const end = Math.min(i + 4, coords.length);
+          for (; i < end; i++) {
+            try {
+              const col = bot.world.getColumn(coords[i].x, coords[i].z);
+              if (col) broadcastChunk(coords[i].x, coords[i].z, col);
+            } catch (e) {}
+          }
+          if (i < coords.length) setImmediate(sendNext);
         }
+        setImmediate(sendNext);
       } else if (message.type === 'player_input' && botReady && bot && bot.entity) {
         const { controls, yaw, pitch } = message;
         const isCreative = bot.game && bot.game.gameMode === 'creative';
