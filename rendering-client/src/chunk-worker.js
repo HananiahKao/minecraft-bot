@@ -79,6 +79,31 @@ const BLOCK_COLORS = {
   nether_brick: 0x3a2a2a, red_nether_bricks: 0x7a3a2a,
   end_stone: 0xd4c56a, purpur_block: 0x9d6ba8, purpur_pillar: 0x9d6ba8,
   end_rod: 0xc8c8ff, cave_air: 0x808080,
+  // amethyst
+  amethyst_block: 0x9b59b6, budding_amethyst: 0x7b3f9e,
+  small_amethyst_bud: 0xb39bd3, medium_amethyst_bud: 0x9b7bc3,
+  large_amethyst_bud: 0x8b5bb3, amethyst_cluster: 0xc39bd3,
+  calcite: 0xe8e8e0, smooth_basalt: 0x3a3a4a,
+  // oak wood family
+  oak_slab: 0xa0782a, oak_stairs: 0xa0782a, oak_fence: 0xa0782a,
+  oak_fence_gate: 0xa0782a, oak_door: 0xa0782a, oak_trapdoor: 0xa0782a,
+  oak_pressure_plate: 0xa0782a, stripped_oak_wood: 0xc8a868,
+  // crops & plants
+  wheat: 0xd4a820, carrots: 0xff8c00, potatoes: 0xd4b460,
+  beetroots: 0x8b1a1a, sugar_cane: 0x5ba85b,
+  fern: 0x2d8a2d, large_fern: 0x2d8a2d,
+  hay_block: 0xe8c84a, pumpkin: 0xe87818,
+  farmland: 0x6b4226,
+  // utility blocks
+  composter: 0x6b3a2a, brewing_stand: 0x4a4a4a,
+  cartography_table: 0x8b6914, lectern: 0x8b6f47,
+  torch: 0xe8a820, wall_torch: 0xe8a820,
+  ladder: 0x8b6914,
+  // beds & carpets
+  white_bed: 0xf0f0f0, yellow_bed: 0xfdd835,
+  white_carpet: 0xf0f0f0, yellow_carpet: 0xfdd835,
+  // village
+  bee_nest: 0xc8a951, bell: 0xffd700,
 };
 
 const colorCache = new Map();
