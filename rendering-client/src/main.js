@@ -276,11 +276,14 @@ function startUpdateLoop() {
     }
     const _dt_unload = performance.now() - _t_unload;
 
-    // Send new chunks to geometry worker — postMessage is non-blocking
+    // Send chunks to geometry worker — rate-limited because postMessage
+    // structured-clones the blocks array synchronously before returning.
+    // 4 per frame keeps serialization cost < ~30ms.
     const _t_add = performance.now();
-    while (chunkQueue.length > 0) {
+    let sent = 0;
+    while (chunkQueue.length > 0 && sent < 4) {
       const { x, z, blocks } = chunkQueue.shift();
-      if (renderer.reserveChunk(x, z)) worker.postMessage({ x, z, blocks });
+      if (renderer.reserveChunk(x, z)) { worker.postMessage({ x, z, blocks }); sent++; }
     }
     const _dt_add = performance.now() - _t_add;
 
