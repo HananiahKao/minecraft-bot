@@ -34,6 +34,10 @@ let connectedClients = [];
 let botReady = false;
 let positionBroadcastInterval = null;
 
+// Creative flight: track last jump keydown time for double-tap-Space toggle
+let lastJumpPressTime = 0;
+let prevJumpState = false;
+
 function initBot() {
   console.log(`🤖 Connecting to ${MINECRAFT_HOST}:${MINECRAFT_PORT} as "${BOT_USERNAME}"...`);
 
@@ -95,8 +99,10 @@ function initBot() {
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning...');
     botReady = false;
-    // Stop all movement on death
+    // Stop all movement on death and reset flight state
     stopAllControls();
+    lastJumpPressTime = 0;
+    prevJumpState = false;
     setTimeout(() => {
       try {
         bot.respawn();
@@ -230,12 +236,47 @@ wss.on('connection', (ws) => {
 
       if (message.type === 'player_input' && botReady && bot && bot.entity) {
         const { controls, yaw, pitch } = message;
+        const isCreative = bot.game && bot.game.gameMode === 'creative';
 
-        // Apply control states — server physics handles the rest
-        const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
-        for (const control of valid) {
-          if (control in controls) {
-            bot.setControlState(control, !!controls[control]);
+        if (isCreative) {
+          // Double-tap Space to toggle flight (matches vanilla Minecraft behaviour).
+          // The client sends jump=true every tick while Space is held; we only act
+          // on the leading edge (false→true transition) so holding Space doesn't
+          // spam the toggle.
+          const jumpNow = !!controls.jump;
+          if (jumpNow && !prevJumpState) {
+            const now = Date.now();
+            if (now - lastJumpPressTime < 250) {
+              // Double-tap: toggle isFlying
+              bot.entity.isFlying = !bot.entity.isFlying;
+            }
+            lastJumpPressTime = now;
+          }
+          prevJumpState = jumpNow;
+
+          // While flying: Space = ascend (jump), Shift = descend (sneak).
+          // Horizontal controls and sprint work the same as on the ground.
+          if (bot.entity.isFlying) {
+            const flyControls = ['forward', 'back', 'left', 'right', 'sprint'];
+            for (const control of flyControls) {
+              if (control in controls) bot.setControlState(control, !!controls[control]);
+            }
+            bot.setControlState('jump',  !!controls.jump);   // ascend
+            bot.setControlState('sneak', !!controls.sneak);  // descend
+          } else {
+            // Not flying — apply all controls normally (walking/jumping in creative)
+            const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
+            for (const control of valid) {
+              if (control in controls) bot.setControlState(control, !!controls[control]);
+            }
+          }
+        } else {
+          // Survival / adventure / spectator — apply controls unchanged
+          const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
+          for (const control of valid) {
+            if (control in controls) {
+              bot.setControlState(control, !!controls[control]);
+            }
           }
         }
 
