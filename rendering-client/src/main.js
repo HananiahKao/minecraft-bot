@@ -90,9 +90,11 @@ function init() {
   startUpdateLoop();
 }
 
-function onBotReady(position) {
-  console.log('🤖 Bot ready at', position);
+function onBotReady(position, gameMode) {
+  console.log('🤖 Bot ready at', position, 'mode:', gameMode);
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
+  // survival/adventure: 4.5 block reach; creative: 5 blocks
+  renderer.setReach(gameMode === 'creative' ? 5 : 4.5);
   updateStatus(`🎮 Playing | Chunks: ${renderer.chunkMeshes.size}`);
   const cx = Math.floor(position[0] / 16);
   const cz = Math.floor(position[2] / 16);
@@ -261,7 +263,7 @@ function startUpdateLoop() {
         try {
           const msg = JSON.parse(raw);
           if (msg.type === 'bot_position') onBotPosition(msg.position);
-          else if (msg.type === 'bot_ready') onBotReady(msg.position);
+          else if (msg.type === 'bot_ready') onBotReady(msg.position, msg.gameMode);
           else if (msg.type === 'error') onError(new Error(msg.message));
         } catch (e) {}
         rawChunkQueue.splice(i, 1);

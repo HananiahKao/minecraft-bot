@@ -62,7 +62,8 @@ function initBot() {
     broadcastMessage({
       type: 'bot_ready',
       position: bot.entity.position.toArray(),
-      dimension: bot.game.dimension
+      dimension: bot.game.dimension,
+      gameMode: bot.game.gameMode,
     });
 
     // Send already-loaded chunks around spawn
@@ -89,6 +90,18 @@ function initBot() {
     } catch (e) {
       // Chunk not ready yet
     }
+  });
+
+  // Re-broadcast the affected chunk column whenever any block changes (dig, place, explosions, etc.)
+  bot.on('blockUpdate', (oldBlock, newBlock) => {
+    if (!connectedClients.length) return;
+    const pos = newBlock.position;
+    const cx = Math.floor(pos.x / 16);
+    const cz = Math.floor(pos.z / 16);
+    try {
+      const col = bot.world.getColumn(cx, cz);
+      if (col) broadcastChunk(cx, cz, col);
+    } catch (e) {}
   });
 
   bot.on('death', () => {
@@ -215,7 +228,8 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({
         type: 'bot_ready',
         position: bot.entity.position.toArray(),
-        dimension: bot.game.dimension
+        dimension: bot.game.dimension,
+        gameMode: bot.game.gameMode,
       }));
       requestChunksAround(bot.entity.position);
     }

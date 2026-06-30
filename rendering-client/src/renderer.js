@@ -45,7 +45,7 @@ export class MinecraftRenderer {
 
     this._raycaster = new THREE.Raycaster();
     this._raycaster.near = 0.1;
-    this._raycaster.far = 10;
+    this._raycaster.far = 5; // updated by setReach()
     this._raycaster.firstHitOnly = true;
     this._centerNDC = new THREE.Vector2(0, 0);
 
@@ -131,6 +131,8 @@ export class MinecraftRenderer {
     this._highlightMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
     this._highlightMesh.visible = true;
   }
+
+  setReach(blocks) { this._raycaster.far = blocks; }
 
   setCameraPosition(x, y, z) { this.camera.position.set(x, y, z); }
   getCameraPosition() { return { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z }; }
