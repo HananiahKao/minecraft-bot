@@ -120,6 +120,7 @@ function startUpdateLoop() {
       else             { _idleFrameSum  += gap; _idleFrameCount++;  }
     }
     _lastRafTimestamp = timestamp;
+    if (inputHandler) inputHandler.applyMouseLook();
     requestAnimationFrame(loop);
 
     // Parse raw chunk JSON (deferred from onmessage to avoid blocking input)

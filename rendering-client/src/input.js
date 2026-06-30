@@ -11,7 +11,9 @@ export class InputHandler {
     this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
     this.pi2 = Math.PI / 2;
     this.isPointerLocked = false;
-    this.lastMouseMoveTime = 0;   // performance.now() of last mousemove
+    this.lastMouseMoveTime = 0;
+    this._pendingDX = 0;   // accumulated mouse delta since last applyMouseLook()
+    this._pendingDY = 0;
 
     this.controls = {
       forward: false,
@@ -53,13 +55,8 @@ export class InputHandler {
     document.addEventListener('mousemove', (e) => {
       if (!this.isPointerLocked) return;
       this.lastMouseMoveTime = performance.now();
-      const movementX = e.movementX || e.mozMovementX || 0;
-      const movementY = e.movementY || e.mozMovementY || 0;
-      this.euler.setFromQuaternion(this.camera.quaternion);
-      this.euler.y -= movementX * 0.003;
-      this.euler.x -= movementY * 0.003;
-      this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
-      this.camera.quaternion.setFromEuler(this.euler);
+      this._pendingDX += e.movementX || e.mozMovementX || 0;
+      this._pendingDY += e.movementY || e.mozMovementY || 0;
     });
 
     document.addEventListener('click', (e) => {
@@ -76,23 +73,29 @@ export class InputHandler {
     window.addEventListener('blur', () => this.clearControls());
   }
 
+  // Call once per rAF frame — applies all accumulated mouse deltas in one trig pass
+  applyMouseLook() {
+    if (this._pendingDX === 0 && this._pendingDY === 0) return;
+    this.euler.setFromQuaternion(this.camera.quaternion);
+    this.euler.y -= this._pendingDX * 0.003;
+    this.euler.x -= this._pendingDY * 0.003;
+    this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
+    this.camera.quaternion.setFromEuler(this.euler);
+    this._pendingDX = 0;
+    this._pendingDY = 0;
+  }
+
   clearControls() {
     Object.keys(this.controls).forEach(k => this.controls[k] = false);
   }
 
-  getControls() {
-    return this.controls;
-  }
+  getControls() { return this.controls; }
 
-  // Three.js euler.y → Mineflayer yaw
-  // Both use: facing direction = (-sin(angle), 0, -cos(angle))
-  // Mineflayer internal: yaw=0=north(-Z), yaw=π=south(+Z)  [see conversions.js toNotchianYaw]
   getMCYaw() {
     this.euler.setFromQuaternion(this.camera.quaternion);
     return this.euler.y;
   }
 
-  // Three.js: negative euler.x = looking down. Minecraft: positive pitch = looking down
   getMCPitch() {
     this.euler.setFromQuaternion(this.camera.quaternion);
     return -this.euler.x;
