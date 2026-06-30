@@ -98,7 +98,7 @@ export class InputHandler {
         this.selectedSlot = n - 1;
         this._slotChanged = true;
       }
-      if (e.key.toLowerCase() === 'f') this._pickPending = true;
+      if (e.key.toLowerCase() === 'f' && !e.repeat) this._pickPending = true;
     });
 
     document.addEventListener('click', (e) => {

@@ -88,8 +88,9 @@ function init() {
   setInterval(() => {
     if (connection && connection.isConnected && inputHandler) {
       const tb = renderer ? renderer.targetedBlock : null;
+      const tf = renderer ? renderer.targetedFace : null;
       const controls = inputHandler.getControls();
-      connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb);
+      connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb, tf);
       if (controls.slotChanged) {
         _heldSlot = controls.selectedSlot;
         updateHotbar();

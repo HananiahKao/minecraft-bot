@@ -55,6 +55,7 @@ export class MinecraftRenderer {
     this._highlightMesh.visible = false;
     this.scene.add(this._highlightMesh);
     this.targetedBlock = null; // { x, y, z } or null
+    this.targetedFace = null;  // { x, y, z } normal of the hit face
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
@@ -131,18 +132,17 @@ export class MinecraftRenderer {
     if (hits.length === 0) {
       this._highlightMesh.visible = false;
       this.targetedBlock = null;
+      this.targetedFace = null;
       return;
     }
     const hit = hits[0];
-    // Step slightly inside the hit face to land in the correct block
     const n = hit.face.normal;
-    const px = hit.point.x - n.x * 0.5;
-    const py = hit.point.y - n.y * 0.5;
-    const pz = hit.point.z - n.z * 0.5;
-    const bx = Math.floor(px);
-    const by = Math.floor(py);
-    const bz = Math.floor(pz);
+    // Step slightly inside the hit face to land in the correct block
+    const bx = Math.floor(hit.point.x - n.x * 0.5);
+    const by = Math.floor(hit.point.y - n.y * 0.5);
+    const bz = Math.floor(hit.point.z - n.z * 0.5);
     this.targetedBlock = { x: bx, y: by, z: bz };
+    this.targetedFace = { x: n.x, y: n.y, z: n.z };
     this._highlightMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
     this._highlightMesh.visible = true;
   }

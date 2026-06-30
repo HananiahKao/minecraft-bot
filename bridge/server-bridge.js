@@ -260,6 +260,9 @@ wss.on('connection', (ws) => {
     console.error('Failed to send init:', e.message);
   }
 
+  let _pickInProgress = false;
+  let _placeInProgress = false;
+
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data);
@@ -270,23 +273,37 @@ wss.on('connection', (ws) => {
           bot.setQuickBarSlot(slot);
         }
       } else if (message.type === 'pick_block' && botReady && bot) {
-        const { x, y, z } = message.block;
-        const block = bot.blockAt(new Vec3(x, y, z));
-        if (block && block.name !== 'air') {
-          // Creative pick-block: put this block type in the current hotbar slot
-          const item = bot.registry.itemsByName[block.name];
-          if (item) {
-            bot.creative.setInventorySlot(36 + bot.quickBarSlot, { type: item.id, count: 1, metadata: 0 })
-              .then(() => broadcastHotbar())
-              .catch(e => console.warn('pick_block failed:', e.message));
+        if (!_pickInProgress) {
+          _pickInProgress = true;
+          const { x, y, z } = message.block;
+          const block = bot.blockAt(new Vec3(x, y, z));
+          if (block && block.name !== 'air') {
+            const item = bot.registry.itemsByName[block.name];
+            if (item) {
+              bot.creative.setInventorySlot(36 + bot.quickBarSlot, { type: item.id, count: 1, metadata: 0 })
+                .then(() => broadcastHotbar())
+                .catch(e => console.warn('pick_block failed:', e.message))
+                .finally(() => { _pickInProgress = false; });
+            } else {
+              _pickInProgress = false;
+            }
+          } else {
+            _pickInProgress = false;
           }
         }
       } else if (message.type === 'place_block' && botReady && bot) {
-        const { x, y, z } = message.block;
-        const targetBlock = bot.blockAt(new Vec3(x, y, z));
-        if (targetBlock) {
-          bot.placeBlock(targetBlock, new Vec3(0, 1, 0))
-            .catch(e => console.warn('place_block failed:', e.message));
+        if (!_placeInProgress) {
+          _placeInProgress = true;
+          const { x, y, z } = message.block;
+          const face = message.face || { x: 0, y: 1, z: 0 };
+          const targetBlock = bot.blockAt(new Vec3(x, y, z));
+          if (targetBlock) {
+            bot.placeBlock(targetBlock, new Vec3(face.x, face.y, face.z))
+              .catch(e => console.warn('place_block failed:', e.message))
+              .finally(() => { _placeInProgress = false; });
+          } else {
+            _placeInProgress = false;
+          }
         }
       } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages

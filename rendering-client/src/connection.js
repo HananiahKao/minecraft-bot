@@ -104,12 +104,12 @@ export class BridgeConnection {
     }
   }
 
-  sendPlayerInput(controls, yaw, pitch, targetedBlock) {
+  sendPlayerInput(controls, yaw, pitch, targetedBlock, targetedFace) {
     this.send({ type: 'player_input', controls, yaw, pitch, targetedBlock });
     if (controls.pickBlock && targetedBlock)
       this.send({ type: 'pick_block', block: targetedBlock });
-    if (controls.placeBlock && targetedBlock)
-      this.send({ type: 'place_block', block: targetedBlock });
+    if (controls.placeBlock && targetedBlock && targetedFace)
+      this.send({ type: 'place_block', block: targetedBlock, face: targetedFace });
   }
 
   close() {
