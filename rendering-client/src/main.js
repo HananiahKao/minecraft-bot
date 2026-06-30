@@ -85,6 +85,10 @@ let _fpsLastTime = performance.now();
 let _fpsFrames = 0;
 let _currentFps = 0;
 let _frameBudgetViolations = 0;
+let _lastRafTimestamp = 0;   // actual wall-clock time of previous rAF callback
+let _frameTimeSum = 0;       // sum of wall-clock inter-frame gaps
+let _frameTimeCount = 0;
+let _maxFrameTime = 0;       // worst wall-clock frame gap
 
 // Metrics tracking
 const _chunkBuildTimes = [];   // ms per chunk build
@@ -100,6 +104,15 @@ let _sessionStart = performance.now();
 function startUpdateLoop() {
   const loop = (timestamp) => {
     const _frameStart = performance.now();
+    // Track wall-clock inter-frame gap (includes GPU time the CPU waits on)
+    if (_lastRafTimestamp > 0) {
+      const gap = timestamp - _lastRafTimestamp;
+      _frameTimeSum += gap;
+      _frameTimeCount++;
+      if (gap > _maxFrameTime) _maxFrameTime = gap;
+      if (gap > 33) _frameBudgetViolations++;
+    }
+    _lastRafTimestamp = timestamp;
     requestAnimationFrame(loop);
 
     // Parse raw chunk JSON (deferred from onmessage to avoid blocking input)
@@ -165,8 +178,7 @@ function startUpdateLoop() {
       if (_currentFps > 0 && _currentFps < _minFps) _minFps = _currentFps;
     }
     if (_frameTotal > 33) {
-      _frameBudgetViolations++;
-      console.log(`[FRAME] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} v=${_frameBudgetViolations}/${_frameCount} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+      console.log(`[FRAME-CPU] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} input=${_dt_input.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
     // Detect when initial load phase ends (queues drain after receiving chunks)
@@ -208,7 +220,9 @@ function updateMetrics() {
     p95Build = sorted[Math.floor(sorted.length * 0.95)];
   }
 
-  const violationPct = _frameCount > 0 ? (_frameBudgetViolations / _frameCount * 100).toFixed(1) : '0.0';
+  const violationPct = _frameTimeCount > 0 ? (_frameBudgetViolations / _frameTimeCount * 100).toFixed(1) : '0.0';
+  const avgFrameMs = _frameTimeCount > 0 ? (_frameTimeSum / _frameTimeCount).toFixed(1) : '—';
+  const maxFrameMs = _maxFrameTime > 0 ? _maxFrameTime.toFixed(1) : '—';
   const minFpsStr = _minFps === Infinity ? '—' : _minFps;
   const loadStr = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
   const vertStr = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
@@ -220,8 +234,9 @@ function updateMetrics() {
     `Load Phase\n` +
     `initial: ${loadStr}\n\n` +
     `Rendering\n` +
+    `frame avg: ${avgFrameMs}ms  max: ${maxFrameMs}ms\n` +
     `fps min: ${minFpsStr}  cur: ${_currentFps}\n` +
-    `violations: ${violationPct}%\n` +
+    `violations (>33ms): ${violationPct}%\n` +
     `vertices: ${vertStr}\n` +
     `chunks: ${renderer ? renderer.chunkMeshes.size : 0}`;
 
@@ -232,8 +247,9 @@ function updateMetrics() {
     `<br><b>Load Phase</b><br>` +
     `initial: ${loadStr}<br>` +
     `<br><b>Rendering</b><br>` +
+    `frame avg: ${avgFrameMs}ms&nbsp;&nbsp;max: ${maxFrameMs}ms<br>` +
     `fps min: ${minFpsStr}&nbsp;&nbsp;cur: ${_currentFps}<br>` +
-    `violations: ${violationPct}%<br>` +
+    `violations (&gt;33ms): ${violationPct}%<br>` +
     `vertices: ${vertStr}<br>` +
     `chunks: ${renderer ? renderer.chunkMeshes.size : 0}<br>` +
     `<br><button id="metrics-copy" style="margin-top:4px;padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
