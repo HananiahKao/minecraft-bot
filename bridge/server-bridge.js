@@ -261,7 +261,7 @@ wss.on('connection', (ws) => {
   }
 
   let _pickInProgress = false;
-  let _placeInProgress = false;
+  let _placeLastMs = 0;
 
   ws.on('message', (data) => {
     try {
@@ -292,18 +292,32 @@ wss.on('connection', (ws) => {
           }
         }
       } else if (message.type === 'place_block' && botReady && bot) {
-        if (!_placeInProgress) {
-          _placeInProgress = true;
-          const { x, y, z } = message.block;
-          const face = message.face || { x: 0, y: 1, z: 0 };
-          const targetBlock = bot.blockAt(new Vec3(x, y, z));
-          if (targetBlock) {
-            bot.placeBlock(targetBlock, new Vec3(face.x, face.y, face.z))
-              .catch(e => console.warn('place_block failed:', e.message))
-              .finally(() => { _placeInProgress = false; });
-          } else {
-            _placeInProgress = false;
-          }
+        const now = Date.now();
+        if (now - _placeLastMs < 250) break; // 250ms cooldown between placements
+        _placeLastMs = now;
+        const { x, y, z } = message.block;
+        const face = message.face || { x: 0, y: 1, z: 0 };
+        // Map face normal to Minecraft direction index
+        // 0=bottom(-Y), 1=top(+Y), 2=north(-Z), 3=south(+Z), 4=west(-X), 5=east(+X)
+        let dir = 1;
+        if (face.y < 0) dir = 0;
+        else if (face.y > 0) dir = 1;
+        else if (face.z < 0) dir = 2;
+        else if (face.z > 0) dir = 3;
+        else if (face.x < 0) dir = 4;
+        else if (face.x > 0) dir = 5;
+        try {
+          bot._client.write('use_item_on', {
+            hand: 0,
+            location: { x, y, z },
+            direction: dir,
+            cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5,
+            insideBlock: false,
+            sequence: 0
+          });
+          console.log(`🧱 Place block at (${x},${y},${z}) face=${dir}`);
+        } catch (e) {
+          console.warn('place_block failed:', e.message);
         }
       } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages
