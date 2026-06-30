@@ -235,16 +235,22 @@ wss.on('connection', (ws) => {
 
         if (isCreative) {
           // flyToggle is a one-shot signal from the client, set on double-tap Space.
-          // Must write an abilities packet — setting bot.entity.isFlying directly is
-          // overridden by prismarine-physics on every tick.
+          // In 1.19.4 the client→server abilities packet only has a flags byte (i8).
+          // Bit layout: 0x01=invulnerable, 0x02=flying, 0x04=canFly, 0x08=instabuild.
+          // When enabling flight we must set both flying (0x02) AND canFly (0x04) = 0x06,
+          // otherwise the server ignores the flying flag.
+          // We also disable prismarine-physics while airborne so the local gravity
+          // simulation doesn't fight the server's creative-flight position updates.
           if (controls.flyToggle) {
             const nowFlying = !bot.entity.isFlying;
-            bot._client.write('abilities', {
-              flags: nowFlying ? 0x02 : 0x00,
-              flyingSpeed: 0.05,
-              walkingSpeed: 0.1,
-            });
+            console.log(`[fly] toggle → nowFlying=${nowFlying} gameMode=${bot.game.gameMode} flags=0x${nowFlying ? '06' : '00'}`);
+            // flags: i8 only — no flyingSpeed/walkingSpeed in this direction
+            bot._client.write('abilities', { flags: nowFlying ? 0x06 : 0x00 });
             bot.entity.isFlying = nowFlying;
+            // Disable local physics while flying so prismarine-physics gravity doesn't
+            // counteract the server-side creative flight position.
+            bot.physicsEnabled = !nowFlying;
+            console.log(`[fly] physicsEnabled=${bot.physicsEnabled} isFlying=${bot.entity.isFlying}`);
           }
 
           // While flying: Space = ascend (jump), Shift = descend (sneak).
