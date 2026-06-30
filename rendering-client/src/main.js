@@ -94,16 +94,25 @@ let _idleFrameSum = 0, _idleFrameCount = 0;
 let _mouseFrameSum = 0, _mouseFrameCount = 0;
 const MOUSE_ACTIVE_WINDOW = 100; // ms — frame counts as mouse-active if moved within this window
 
-// Metrics tracking
-const _chunkBuildTimes = [];   // ms per chunk build
+// Metrics tracking — accumulated
+const _chunkBuildTimes = [];
 let _totalVertices = 0;
 let _minFps = Infinity;
-let _loadPhaseStart = null;    // set when first chunk arrives
-let _loadPhaseEnd = null;      // set when queues first drain after loading
+let _loadPhaseStart = null;
+let _loadPhaseEnd = null;
 let _loadPhaseRecorded = false;
 let _initialLoadMs = null;
 let _metricsLastUpdate = 0;
 let _sessionStart = performance.now();
+
+// Per-second snapshot ring buffer (last 10 seconds)
+const SNAPSHOT_COUNT = 10;
+const _snapshots = [];   // { t, fps, idleMs, mouseMs, violPct, chunks, dirtyRegions }
+// Accumulators reset each second
+let _snapIdleSum = 0, _snapIdleCount = 0;
+let _snapMouseSum = 0, _snapMouseCount = 0;
+let _snapViolations = 0, _snapFrames = 0;
+let _snapLastTime = performance.now();
 
 function startUpdateLoop() {
   const loop = (timestamp) => {
@@ -118,6 +127,11 @@ function startUpdateLoop() {
       const mouseActive = inputHandler && (timestamp - inputHandler.lastMouseMoveTime) < MOUSE_ACTIVE_WINDOW;
       if (mouseActive) { _mouseFrameSum += gap; _mouseFrameCount++; }
       else             { _idleFrameSum  += gap; _idleFrameCount++;  }
+      // Per-second snapshot accumulators
+      _snapFrames++;
+      if (gap > 33) _snapViolations++;
+      if (mouseActive) { _snapMouseSum += gap; _snapMouseCount++; }
+      else             { _snapIdleSum  += gap; _snapIdleCount++;  }
     }
     _lastRafTimestamp = timestamp;
     if (inputHandler) inputHandler.applyMouseLook();
@@ -201,7 +215,26 @@ function startUpdateLoop() {
       _loadPhaseRecorded = true;
     }
 
-    // Update metrics panel every second
+    // Flush per-second snapshot and update panel
+    if (_now - _snapLastTime >= 1000) {
+      const elapsed = _now - _snapLastTime;
+      _snapLastTime = _now;
+      const snap = {
+        t: Math.round((_now - _sessionStart) / 1000),
+        fps: Math.round(_snapFrames * 1000 / elapsed),
+        idleMs:  _snapIdleCount  > 0 ? (_snapIdleSum  / _snapIdleCount).toFixed(0)  : '—',
+        mouseMs: _snapMouseCount > 0 ? (_snapMouseSum / _snapMouseCount).toFixed(0) : '—',
+        violPct: _snapFrames > 0 ? (_snapViolations / _snapFrames * 100).toFixed(0) : '0',
+        chunks: renderer ? renderer.chunkMeshes.size : 0,
+        dirty: renderer ? renderer._dirtyRegions.size : 0,
+      };
+      _snapshots.push(snap);
+      if (_snapshots.length > SNAPSHOT_COUNT) _snapshots.shift();
+      // Reset accumulators
+      _snapIdleSum = 0; _snapIdleCount = 0;
+      _snapMouseSum = 0; _snapMouseCount = 0;
+      _snapViolations = 0; _snapFrames = 0;
+    }
     if (_now - _metricsLastUpdate >= 1000) {
       _metricsLastUpdate = _now;
       updateMetrics();
@@ -260,8 +293,18 @@ function updateMetrics() {
     ['',  `chunks: ${chunkCount}  regions (draw calls): ${regionCount}`],
   ];
 
-  const plainText = lines.map(([, text]) => text).join('\n');
-  const html = lines.map(([type, text]) => {
+  // Recent snapshots log — newest first
+  const snapLines = _snapshots.length > 0
+    ? [['b', 'Recent (per second)'],
+       ['', 't    fps  idle  mouse  viol% chnk'],
+       ...[..._snapshots].reverse().map(s =>
+         ['', `+${String(s.t).padEnd(3)} ${String(s.fps).padEnd(4)} ${String(s.idleMs).padEnd(5)} ${String(s.mouseMs).padEnd(6)} ${String(s.violPct).padEnd(5)} ${s.chunks}`]
+       )]
+    : [];
+
+  const allLines = [...lines, ...snapLines];
+  const plainText = allLines.map(([, text]) => text).join('\n');
+  const html = allLines.map(([type, text]) => {
     const escaped = text.replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
     return type === 'b' ? `<br><b>${escaped}</b>` : escaped;
   }).join('<br>');
