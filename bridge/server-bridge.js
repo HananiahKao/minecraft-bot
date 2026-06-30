@@ -92,16 +92,24 @@ function initBot() {
     }
   });
 
-  // Re-broadcast the affected chunk column whenever any block changes (dig, place, explosions, etc.)
+  // Re-broadcast the affected chunk column when a block changes.
+  // Debounced per chunk key — rapid world ticks (grass, physics) collapse into one send.
+  const _blockUpdateTimers = new Map();
   bot.on('blockUpdate', (oldBlock, newBlock) => {
     if (!connectedClients.length) return;
     const pos = newBlock.position;
     const cx = Math.floor(pos.x / 16);
     const cz = Math.floor(pos.z / 16);
-    try {
-      const col = bot.world.getColumn(cx, cz);
-      if (col) broadcastChunk(cx, cz, col);
-    } catch (e) {}
+    const key = `${cx},${cz}`;
+    if (_blockUpdateTimers.has(key)) return;
+    _blockUpdateTimers.set(key, setTimeout(() => {
+      _blockUpdateTimers.delete(key);
+      if (!connectedClients.length) return;
+      try {
+        const col = bot.world.getColumn(cx, cz);
+        if (col) broadcastChunk(cx, cz, col);
+      } catch (e) {}
+    }, 300));
   });
 
   bot.on('death', () => {

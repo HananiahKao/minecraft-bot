@@ -286,6 +286,8 @@ function startUpdateLoop() {
     let sent = 0;
     while (chunkQueue.length > 0 && sent < 4) {
       const { x, z, blocks } = chunkQueue.shift();
+      // If chunk is already loaded (not just pending), this is a live update — force replace
+      if (renderer.chunkMeshes.has(`${x},${z}`)) renderer.removeChunk(x, z);
       if (renderer.reserveChunk(x, z)) { worker.postMessage({ x, z, blocks }); sent++; }
     }
     const _dt_add = performance.now() - _t_add;
