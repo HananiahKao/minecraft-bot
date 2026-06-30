@@ -105,17 +105,19 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
 
   const nameList = [''];
   const nameIndex = new Map([['', 0]]);
-  const grid = new Uint16Array(16 * 256 * 16);
-  let yMin = 255, yMax = 0;
-  for (const { x, y, z, name } of blocks) {
-    let id = nameIndex.get(name);
-    if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
-    const yi = y < 0 ? y + 256 : y; // remap negative Y into grid (Y stored offset +256 for negatives)
-    grid[x + z * 16 + yi * 256] = id;
+  let yMin = Infinity, yMax = -Infinity;
+  for (const { y } of blocks) {
     if (y < yMin) yMin = y;
     if (y > yMax) yMax = y;
   }
   const yRange = yMax - yMin + 1;
+  // Grid indexed by (x, z, y-yMin) so negative Y works without remapping
+  const grid = new Uint16Array(16 * 16 * yRange);
+  for (const { x, y, z, name } of blocks) {
+    let id = nameIndex.get(name);
+    if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
+    grid[x + z * 16 + (y - yMin) * 16 * 16] = id;
+  }
 
   const positions = [];
   const normals = [];
@@ -156,8 +158,8 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
   }
 
   function gi(x, y, z) {
-    const yi = y < 0 ? y + 256 : y;
-    return grid[x + z * 16 + yi * 256];
+    if (y < yMin || y > yMax) return 0;
+    return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
   // TOP +Y

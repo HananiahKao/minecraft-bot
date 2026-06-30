@@ -11,6 +11,7 @@ import { BridgeConnection } from './connection.js';
 let renderer = null;
 let inputHandler = null;
 let connection = null;
+let worker = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 let lastBotChunkX = null;
@@ -61,7 +62,8 @@ function init() {
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
 
   // Geometry worker — builds Float32Arrays off the main thread
-  const worker = new Worker('/src/chunk-worker.js');
+  worker = new Worker('/src/chunk-worker.js');
+  worker.onerror = (e) => console.error('[worker error]', e.message, e.filename, e.lineno);
   worker.onmessage = ({ data }) => {
     if (data.empty) return;
     const t0 = performance.now();
