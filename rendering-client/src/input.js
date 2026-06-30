@@ -80,13 +80,18 @@ export class InputHandler {
       }
       if (e.button === 0) this._breakPending = true;
       if (e.button === 1) { e.preventDefault(); this._pickPending = true; }
-      if (e.button === 2) this._placePending = true;
+      if (e.button === 2) { console.log('[input] right-click → placePending'); this._placePending = true; }
     });
 
     document.addEventListener('contextmenu', (e) => e.preventDefault());
 
+    this._lastScrollMs = 0;
     document.addEventListener('wheel', (e) => {
       if (!this.isPointerLocked) return;
+      if (Math.abs(e.deltaY) < 20) return; // dead zone — Magic Mouse is too sensitive
+      const now = performance.now();
+      if (now - this._lastScrollMs < 300) return; // max one slot change per 300ms
+      this._lastScrollMs = now;
       const dir = e.deltaY > 0 ? 1 : -1;
       this.selectedSlot = (this.selectedSlot + dir + 9) % 9;
       this._slotChanged = true;
