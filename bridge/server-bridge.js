@@ -307,7 +307,7 @@ wss.on('connection', (ws) => {
         else if (face.x < 0) dir = 4;
         else if (face.x > 0) dir = 5;
         try {
-          bot._client.write('use_item_on', {
+          bot._client.write('block_place', {
             hand: 0,
             location: { x, y, z },
             direction: dir,
