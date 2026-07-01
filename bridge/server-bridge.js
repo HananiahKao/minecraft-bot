@@ -33,6 +33,7 @@ let bot = null;
 let connectedClients = [];
 let botReady = false;
 let positionBroadcastInterval = null;
+let _pickInProgress = false;
 
 
 function initBot() {
@@ -58,6 +59,7 @@ function initBot() {
     console.log('✅ Bot spawned!');
     console.log(`📍 Position: ${bot.entity.position.toString()}`);
     botReady = true;
+    _pickInProgress = false;
 
     broadcastMessage({
       type: 'bot_ready',
@@ -260,7 +262,6 @@ wss.on('connection', (ws) => {
     console.error('Failed to send init:', e.message);
   }
 
-  let _pickInProgress = false;
   let _placeLastMs = 0;
 
   ws.on('message', (data) => {
