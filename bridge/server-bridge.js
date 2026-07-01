@@ -34,6 +34,7 @@ let connectedClients = [];
 let botReady = false;
 let positionBroadcastInterval = null;
 let _pickInProgress = false;
+let _serverCanFly = false;
 
 
 function initBot() {
@@ -52,6 +53,8 @@ function initBot() {
     const flying    = !!(packet.flags & 0x02);
     const canFly    = !!(packet.flags & 0x04);
     const instabuild = !!(packet.flags & 0x08);
+    _serverCanFly = canFly;
+    if (!canFly && bot.entity) bot.entity.isFlying = false;
     console.log(`[abilities←server] flags=0x${packet.flags.toString(16).padStart(2,'0')} flying=${flying} canFly=${canFly} instabuild=${instabuild} flySpeed=${packet.flyingSpeed} walkSpeed=${packet.walkingSpeed}`);
   });
 
@@ -357,7 +360,7 @@ wss.on('connection', (ws) => {
           // When enabling flight we must set both flying (0x02) AND canFly (0x04) = 0x06,
           // otherwise the server ignores the flying flag.
 
-          if (controls.flyToggle) {
+          if (controls.flyToggle && _serverCanFly) {
             const nowFlying = !bot.entity.isFlying;
             console.log(`[fly] toggle → nowFlying=${nowFlying}`);
             // abilities packet: flags i8 only (1.19.4 client→server direction).
