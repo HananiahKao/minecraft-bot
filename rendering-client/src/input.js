@@ -16,7 +16,7 @@ export class InputHandler {
     this._pendingDY = 0;
     this._flyToggle = false;     // one-shot: true for one send cycle after double-tap Space
     this._lastSpaceTap = 0;      // timestamp of last Space keydown leading edge
-    this._breakPending = false;  // one-shot: left-click while locked → break targeted block
+    this._breakHeld = false;      // held state: left button held → mine targeted block
     this._pickPending = false;   // one-shot: middle-click → pick block into hotbar
     this._placePending = false;  // one-shot: right-click → place held block
     this.selectedSlot = 0;       // 0–8, mirrored locally for immediate UI feedback
@@ -78,9 +78,13 @@ export class InputHandler {
         document.body.requestPointerLock();
         return;
       }
-      if (e.button === 0) this._breakPending = true;
+      if (e.button === 0) this._breakHeld = true;
       if (e.button === 1) { e.preventDefault(); this._pickPending = true; }
       if (e.button === 2) { console.log('[input] right-click → placePending'); this._placePending = true; }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this._breakHeld = false;
     });
 
     document.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -114,7 +118,7 @@ export class InputHandler {
     document.addEventListener('pointerlockchange', () => {
       this.isPointerLocked = document.pointerLockElement === document.body;
       // Clear all controls on any pointer lock change to prevent stuck keys
-      if (!this.isPointerLocked) this.clearControls();
+      if (!this.isPointerLocked) { this.clearControls(); this._breakHeld = false; }
     });
 
     window.addEventListener('blur', () => this.clearControls());
@@ -140,8 +144,7 @@ export class InputHandler {
     const flyToggle = this._flyToggle;
     this._flyToggle = false;
     if (flyToggle) this.controls.jump = false;
-    const breakBlock = this._breakPending;
-    this._breakPending = false;
+    const breakBlock = this._breakHeld;
     const pickBlock = this._pickPending;
     this._pickPending = false;
     const placeBlock = this._placePending;

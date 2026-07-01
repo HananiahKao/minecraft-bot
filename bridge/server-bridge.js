@@ -34,6 +34,8 @@ let connectedClients = [];
 let botReady = false;
 let positionBroadcastInterval = null;
 let _pickInProgress = false;
+let _digInProgress = false;
+let _digTarget = null;
 let _serverCanFly = false;
 
 
@@ -344,12 +346,24 @@ wss.on('connection', (ws) => {
         const { controls, yaw, pitch, targetedBlock } = message;
 
         if (controls.breakBlock && targetedBlock) {
-          const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
-          const block = bot.blockAt(pos);
-          if (block && block.name !== 'air') {
-            console.log(`⛏️  Breaking ${block.name} at ${pos}`);
-            bot.dig(block).catch(e => console.warn('dig failed:', e.message));
+          const key = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
+          if (!_digInProgress || key !== _digTarget) {
+            if (_digInProgress) { try { bot.stopDigging(); } catch (e) {} }
+            const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
+            const block = bot.blockAt(pos);
+            if (block && block.name !== 'air') {
+              _digInProgress = true;
+              _digTarget = key;
+              console.log(`⛏️  Breaking ${block.name} at ${pos}`);
+              bot.dig(block)
+                .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
+                .finally(() => { _digInProgress = false; _digTarget = null; });
+            }
           }
+        } else if (!controls.breakBlock && _digInProgress) {
+          try { bot.stopDigging(); } catch (e) {}
+          _digInProgress = false;
+          _digTarget = null;
         }
         const isCreative = bot.game && bot.game.gameMode === 'creative';
 
