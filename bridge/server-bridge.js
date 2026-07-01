@@ -50,6 +50,17 @@ function initBot() {
     skipValidation: true
   });
 
+  // mineflayer's digging plugin omits the `sequence` field added in 1.19.4.
+  // Without it the server misreads the location as (0,0,0) and rejects the dig.
+  // Wrap _client.write to inject sequence:0 for any block_dig packet missing it.
+  const _origWrite = bot._client.write.bind(bot._client);
+  bot._client.write = (name, params) => {
+    if (name === 'block_dig' && params.sequence === undefined) {
+      params = { ...params, sequence: 0 };
+    }
+    return _origWrite(name, params);
+  };
+
   // Log every server→client abilities packet so we can confirm the server accepted our flying state
   bot._client.on('abilities', (packet) => {
     const flying    = !!(packet.flags & 0x02);
