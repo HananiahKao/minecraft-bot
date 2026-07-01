@@ -356,7 +356,9 @@ wss.on('connection', (ws) => {
       } else if (message.type === 'player_input' && botReady && bot && bot.entity) {
         const { controls, yaw, pitch, targetedBlock } = message;
 
-        if (controls.breakBlock && targetedBlock) {
+        const gm = bot.game && bot.game.gameMode;
+        const canBreak = gm === 'survival' || gm === 'creative';
+        if (controls.breakBlock && targetedBlock && canBreak) {
           const key = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
           if (!_digInProgress || key !== _digTarget) {
             if (_digInProgress) { try { bot.stopDigging(); } catch (e) {} }
@@ -371,7 +373,7 @@ wss.on('connection', (ws) => {
                 .finally(() => { _digInProgress = false; _digTarget = null; });
             }
           }
-        } else if (!controls.breakBlock && _digInProgress) {
+        } else if ((!controls.breakBlock || !canBreak) && _digInProgress) {
           try { bot.stopDigging(); } catch (e) {}
           _digInProgress = false;
           _digTarget = null;
