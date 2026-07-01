@@ -309,6 +309,8 @@ wss.on('connection', (ws) => {
           }
         }
       } else if (message.type === 'place_block' && botReady && bot) {
+        const gm = bot.game && bot.game.gameMode;
+        if (gm !== 'survival' && gm !== 'creative') return;
         const now = Date.now();
         if (now - _placeLastMs < 250) return; // 250ms cooldown between placements
         _placeLastMs = now;
