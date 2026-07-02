@@ -429,19 +429,19 @@ function startUpdateLoop() {
       }
       if (reserved) { worker.postMessage({ x, z, blocks, edges: buildEdges(x, z) }); sent++; }
     }
-    // When chunkQueue is empty, process one deferred neighbor seam-fix rebuild per frame
-    if (chunkQueue.length === 0 && _neighborRebuildQueue.size > 0) {
+    // Fill remaining per-frame worker slots with deferred neighbor seam-fix rebuilds.
+    // New chunks get priority (processed first above); rebuilds use leftover capacity.
+    // This ensures neighbor seams close even while new chunks are arriving during exploration.
+    while (_neighborRebuildQueue.size > 0 && sent < 4) {
       const nkey = _neighborRebuildQueue.values().next().value;
       _neighborRebuildQueue.delete(nkey);
-      if (!_chunkQueueKeys.has(nkey)) {
-        const [nx, nz] = nkey.split(',').map(Number);
-        const nblocks = _chunkBlockData.get(nkey);
-        if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
-          const arr = [];
-          for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); arr.push({ x, y, z, name: n }); }
-          _chunkQueueKeys.add(nkey);
-          chunkQueue.push({ x: nx, z: nz, blocks: arr });
-        }
+      if (_chunkQueueKeys.has(nkey)) continue; // already queued as a new chunk — skip
+      const [rnx, rnz] = nkey.split(',').map(Number);
+      const nblocks = _chunkBlockData.get(nkey);
+      if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
+        const arr = [];
+        for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); arr.push({ x, y, z, name: n }); }
+        if (renderer.reserveUpdate(rnx, rnz)) { worker.postMessage({ x: rnx, z: rnz, blocks: arr, edges: buildEdges(rnx, rnz) }); sent++; }
       }
     }
     const _dt_add = performance.now() - _t_add;
