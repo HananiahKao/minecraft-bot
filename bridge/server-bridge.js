@@ -67,13 +67,13 @@ function initBot() {
     const canFly    = !!(packet.flags & 0x04);
     const instabuild = !!(packet.flags & 0x08);
     _serverCanFly = canFly;
-    if (!canFly && bot.entity) bot.entity.isFlying = false;
+    if (bot.entity) bot.entity.isFlying = flying; // mirror server's flying state immediately
     console.log(`[abilities←server] flags=0x${packet.flags.toString(16).padStart(2,'0')} flying=${flying} canFly=${canFly} instabuild=${instabuild} flySpeed=${packet.flyingSpeed} walkSpeed=${packet.walkingSpeed}`);
   });
 
   bot.on('spawn', () => {
     console.log('✅ Bot spawned!');
-    console.log(`📍 Position: ${bot.entity.position.toString()}`);
+    if (bot.entity) console.log(`📍 Position: ${bot.entity.position.toString()}`);
     botReady = true;
     _pickInProgress = false;
 
@@ -160,7 +160,7 @@ function initBot() {
       setTimeout(() => {
         console.log('Attempting to reconnect after connection error...');
         initBot();
-      }, 5000);
+      }, 2000);
     }
   });
 
@@ -174,7 +174,7 @@ function initBot() {
     setTimeout(() => {
       console.log('Attempting to reconnect...');
       initBot();
-    }, 5000);
+    }, 2000);
   });
 }
 
