@@ -154,6 +154,14 @@ function initBot() {
     console.error('❌ Bot error:', err.message);
     botReady = false;
     broadcastMessage({ type: 'error', message: err.message || 'Unknown error' });
+    // 'end' fires after most errors, but ECONNREFUSED only fires 'error' — schedule
+    // a retry here too so a failed connection attempt doesn't silently stop retrying.
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
+      setTimeout(() => {
+        console.log('Attempting to reconnect after connection error...');
+        initBot();
+      }, 5000);
+    }
   });
 
   bot.on('end', (reason) => {
