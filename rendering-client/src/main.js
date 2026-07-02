@@ -20,8 +20,11 @@ let lastBotChunkX = null;
 let lastBotChunkZ = null;
 const rawChunkQueue = [];       // raw JSON strings — parsed lazily in frame loop
 const chunkQueue = [];          // parsed chunk objects waiting to be added to scene
+const _chunkQueueKeys = new Set(); // keys currently in chunkQueue — prevents duplicates
 const unloadQueue = [];         // [chunkX, chunkZ] pairs waiting to be removed
 const _chunkBlockData = new Map(); // chunkKey → Map<"lx,y,lz", name> — kept in sync for fast block updates
+const _chunkEdgeCache = new Map(); // chunkKey → { nx, px, nz, pz } pre-built edge slices for O(1) buildEdges
+const _neighborRebuildQueue = new Set(); // chunk keys needing seam-fix rebuild (processed lazily when chunkQueue drains)
 
 // ── Event log ────────────────────────────────────────────────────────────────
 const EVENT_MAX = 100;
@@ -182,20 +185,28 @@ function onChunkReceived(chunkData) {
   chunkQueue.push(chunkData);
 }
 
-// Build edge slices from adjacent chunk block data so the worker can cull cross-chunk faces.
-// Each edge is a Map<"y,local" → nameString> for the single-block-wide slice facing this chunk.
+// Pre-compute the 4 edge slices for a chunk's blockMap (called once on chunk arrival).
+// Slices are keyed "y,local" → name. nx/px use lz as local coord; nz/pz use lx.
+function computeEdgeSlices(blockMap) {
+  const nx = new Map(), px = new Map(), nz = new Map(), pz = new Map();
+  for (const [k, name] of blockMap) {
+    const [lx, y, lz] = k.split(',').map(Number);
+    if (lx === 0)  nx.set(`${y},${lz}`, name);
+    if (lx === 15) px.set(`${y},${lz}`, name);
+    if (lz === 0)  nz.set(`${y},${lx}`, name);
+    if (lz === 15) pz.set(`${y},${lx}`, name);
+  }
+  return { nx, px, nz, pz };
+}
+
+// Build edge data for the worker — O(4 map lookups) using the pre-built cache.
+// edges.nx = the px slice of the west neighbor (its x=15 face is our x=-1 neighbor).
 function buildEdges(cx, cz) {
   const edges = {};
-  const adj = [
-    ['nx', cx - 1, cz, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lx === 15) e.set(`${y},${lz}`, n); } return e; }],
-    ['px', cx + 1, cz, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lx === 0)  e.set(`${y},${lz}`, n); } return e; }],
-    ['nz', cx, cz - 1, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lz === 15) e.set(`${y},${lx}`, n); } return e; }],
-    ['pz', cx, cz + 1, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lz === 0)  e.set(`${y},${lx}`, n); } return e; }],
-  ];
-  for (const [dir, nx, nz, extract] of adj) {
-    const bm = _chunkBlockData.get(`${nx},${nz}`);
-    if (bm) edges[dir] = extract(bm);
-  }
+  const nxC = _chunkEdgeCache.get(`${cx-1},${cz}`); if (nxC) edges.nx = nxC.px;
+  const pxC = _chunkEdgeCache.get(`${cx+1},${cz}`); if (pxC) edges.px = pxC.nx;
+  const nzC = _chunkEdgeCache.get(`${cx},${cz-1}`); if (nzC) edges.nz = nzC.pz;
+  const pzC = _chunkEdgeCache.get(`${cx},${cz+1}`); if (pzC) edges.pz = pzC.nz;
   return edges;
 }
 
@@ -213,6 +224,14 @@ function onBlockUpdate(msg) {
 
   if (msg.name === 'air') blockMap.delete(bkey);
   else blockMap.set(bkey, msg.name);
+
+  // Keep edge cache current
+  _chunkEdgeCache.set(ckey, computeEdgeSlices(blockMap));
+  // If the updated block is on a chunk edge, the adjacent chunk needs a seam-fix rebuild
+  if (lx === 0)  { const k = `${cx-1},${cz}`; if (_chunkBlockData.has(k)) _neighborRebuildQueue.add(k); }
+  if (lx === 15) { const k = `${cx+1},${cz}`; if (_chunkBlockData.has(k)) _neighborRebuildQueue.add(k); }
+  if (lz === 0)  { const k = `${cx},${cz-1}`; if (_chunkBlockData.has(k)) _neighborRebuildQueue.add(k); }
+  if (lz === 15) { const k = `${cx},${cz+1}`; if (_chunkBlockData.has(k)) _neighborRebuildQueue.add(k); }
 
   // Immediately rebuild the chunk from the updated local data
   const blocks = [];
@@ -348,20 +367,20 @@ function startUpdateLoop() {
       if (raw.length > 500) {
         try {
           const msg = JSON.parse(raw);
-          chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
-          // Store block data for fast single-block updates
           const ckey = `${msg.x},${msg.z}`;
+          // Store block data and pre-build edge slices (O(n) once, reused as O(1) each call)
           const blockMap = new Map();
           for (const b of msg.blocks) blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
           _chunkBlockData.set(ckey, blockMap);
-          // Re-queue already-loaded neighbors so they rebuild with correct edge culling
+          _chunkEdgeCache.set(ckey, computeEdgeSlices(blockMap));
+          // Enqueue this chunk (dedup: skip if already queued)
+          if (!_chunkQueueKeys.has(ckey)) {
+            _chunkQueueKeys.add(ckey);
+            chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
+          }
+          // Schedule neighbor seam-fix rebuilds lazily — processed when chunkQueue drains
           for (const [nx, nz] of [[msg.x-1,msg.z],[msg.x+1,msg.z],[msg.x,msg.z-1],[msg.x,msg.z+1]]) {
-            const nkey = `${nx},${nz}`;
-            const nblocks = _chunkBlockData.get(nkey);
-            if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
-              const arr = []; for (const [k, n] of nblocks) { const [x,y,z] = k.split(',').map(Number); arr.push({x,y,z,name:n}); }
-              chunkQueue.push({ x: nx, z: nz, blocks: arr });
-            }
+            if (_chunkBlockData.has(`${nx},${nz}`)) _neighborRebuildQueue.add(`${nx},${nz}`);
           }
         } catch (e) {}
         rawChunkQueue.splice(i, 1);
@@ -385,8 +404,11 @@ function startUpdateLoop() {
     const _t_unload = performance.now();
     while (unloadQueue.length > 0) {
       const [kx, kz] = unloadQueue.shift();
+      const ukey = `${kx},${kz}`;
       renderer.removeChunk(kx, kz);
-      _chunkBlockData.delete(`${kx},${kz}`);
+      _chunkBlockData.delete(ukey);
+      _chunkEdgeCache.delete(ukey);
+      _neighborRebuildQueue.delete(ukey);
     }
     const _dt_unload = performance.now() - _t_unload;
 
@@ -398,14 +420,29 @@ function startUpdateLoop() {
     while (chunkQueue.length > 0 && sent < 4) {
       const { x, z, blocks } = chunkQueue.shift();
       const key = `${x},${z}`;
+      _chunkQueueKeys.delete(key);
       let reserved = false;
       if (renderer.chunkMeshes.has(key) || renderer._updating.has(key)) {
-        // Live update (loaded or mid-rebuild) — last worker result wins
         reserved = renderer.reserveUpdate(x, z);
       } else {
         reserved = renderer.reserveChunk(x, z);
       }
       if (reserved) { worker.postMessage({ x, z, blocks, edges: buildEdges(x, z) }); sent++; }
+    }
+    // When chunkQueue is empty, process one deferred neighbor seam-fix rebuild per frame
+    if (chunkQueue.length === 0 && _neighborRebuildQueue.size > 0) {
+      const nkey = _neighborRebuildQueue.values().next().value;
+      _neighborRebuildQueue.delete(nkey);
+      if (!_chunkQueueKeys.has(nkey)) {
+        const [nx, nz] = nkey.split(',').map(Number);
+        const nblocks = _chunkBlockData.get(nkey);
+        if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
+          const arr = [];
+          for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); arr.push({ x, y, z, name: n }); }
+          _chunkQueueKeys.add(nkey);
+          chunkQueue.push({ x: nx, z: nz, blocks: arr });
+        }
+      }
     }
     const _dt_add = performance.now() - _t_add;
 
