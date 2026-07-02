@@ -354,6 +354,15 @@ function startUpdateLoop() {
           const blockMap = new Map();
           for (const b of msg.blocks) blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
           _chunkBlockData.set(ckey, blockMap);
+          // Re-queue already-loaded neighbors so they rebuild with correct edge culling
+          for (const [nx, nz] of [[msg.x-1,msg.z],[msg.x+1,msg.z],[msg.x,msg.z-1],[msg.x,msg.z+1]]) {
+            const nkey = `${nx},${nz}`;
+            const nblocks = _chunkBlockData.get(nkey);
+            if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
+              const arr = []; for (const [k, n] of nblocks) { const [x,y,z] = k.split(',').map(Number); arr.push({x,y,z,name:n}); }
+              chunkQueue.push({ x: nx, z: nz, blocks: arr });
+            }
+          }
         } catch (e) {}
         rawChunkQueue.splice(i, 1);
       } else {
