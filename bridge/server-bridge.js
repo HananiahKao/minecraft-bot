@@ -393,10 +393,10 @@ wss.on('connection', (ws) => {
 
         if (isSpectator) {
           // Spectator: always flying, no toggle needed. Space=up, Shift=down.
-          if (!bot.entity.isFlying) {
-            bot.entity.isFlying = true;
-            bot.creative.startFlying();
-          }
+          // Force gravity to 0 every tick — the physics engine can restore it between ticks.
+          bot.entity.isFlying = true;
+          bot.physics.gravity = 0;
+          bot.entity.velocity.y = 0; // clear any residual fall velocity first
           const flyControls = ['forward', 'back', 'left', 'right', 'sprint'];
           for (const control of flyControls) {
             if (control in controls) bot.setControlState(control, !!controls[control]);
@@ -404,7 +404,6 @@ wss.on('connection', (ws) => {
           const FLY_SPEED_Y = 0.25;
           if (controls.jump && !controls.sneak)       bot.entity.velocity.y = FLY_SPEED_Y;
           else if (controls.sneak && !controls.jump)  bot.entity.velocity.y = -FLY_SPEED_Y;
-          else                                        bot.entity.velocity.y = 0;
           bot.setControlState('jump',  !!controls.jump);
           bot.setControlState('sneak', !!controls.sneak);
         } else if (isCreative) {
@@ -464,7 +463,9 @@ wss.on('connection', (ws) => {
             }
           }
         } else {
-          // Survival / adventure / spectator — apply controls unchanged
+          // Survival / adventure — restore normal gravity if spectator left it zeroed
+          if (bot.physics.gravity === 0) bot.creative.stopFlying();
+          // Apply controls unchanged
           const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
           for (const control of valid) {
             if (control in controls) {
