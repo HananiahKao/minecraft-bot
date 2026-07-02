@@ -88,6 +88,18 @@ const BLOCK_COLORS = {
   oak_slab: 0xa0782a, oak_stairs: 0xa0782a, oak_fence: 0xa0782a,
   oak_fence_gate: 0xa0782a, oak_door: 0xa0782a, oak_trapdoor: 0xa0782a,
   oak_pressure_plate: 0xa0782a, stripped_oak_wood: 0xc8a868,
+  // spruce wood family
+  spruce_slab: 0x5a4a3a, spruce_stairs: 0x5a4a3a, spruce_fence: 0x5a4a3a,
+  spruce_fence_gate: 0x5a4a3a, spruce_door: 0x5a4a3a, spruce_trapdoor: 0x5a4a3a,
+  spruce_pressure_plate: 0x5a4a3a,
+  // jungle wood family
+  jungle_slab: 0x7a5c2b, jungle_stairs: 0x7a5c2b, jungle_fence: 0x7a5c2b,
+  jungle_fence_gate: 0x7a5c2b, jungle_door: 0x7a5c2b, jungle_trapdoor: 0x7a5c2b,
+  jungle_pressure_plate: 0x7a5c2b,
+  // misc blocks seen in the wild
+  cobweb: 0xd0d0d0,
+  chain: 0x4a4a5a,
+  rail: 0x8b7355, powered_rail: 0x8b7355, detector_rail: 0x8b7355, activator_rail: 0x8b7355,
   // crops & plants
   wheat: 0xd4a820, carrots: 0xff8c00, potatoes: 0xd4b460,
   beetroots: 0x8b1a1a, sugar_cane: 0x5ba85b,
