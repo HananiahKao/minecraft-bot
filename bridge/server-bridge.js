@@ -389,8 +389,25 @@ wss.on('connection', (ws) => {
           _digTarget = null;
         }
         const isCreative = bot.game && bot.game.gameMode === 'creative';
+        const isSpectator = bot.game && bot.game.gameMode === 'spectator';
 
-        if (isCreative) {
+        if (isSpectator) {
+          // Spectator: always flying, no toggle needed. Space=up, Shift=down.
+          if (!bot.entity.isFlying) {
+            bot.entity.isFlying = true;
+            bot.creative.startFlying();
+          }
+          const flyControls = ['forward', 'back', 'left', 'right', 'sprint'];
+          for (const control of flyControls) {
+            if (control in controls) bot.setControlState(control, !!controls[control]);
+          }
+          const FLY_SPEED_Y = 0.25;
+          if (controls.jump && !controls.sneak)       bot.entity.velocity.y = FLY_SPEED_Y;
+          else if (controls.sneak && !controls.jump)  bot.entity.velocity.y = -FLY_SPEED_Y;
+          else                                        bot.entity.velocity.y = 0;
+          bot.setControlState('jump',  !!controls.jump);
+          bot.setControlState('sneak', !!controls.sneak);
+        } else if (isCreative) {
           // flyToggle is a one-shot signal from the client, set on double-tap Space.
           // In 1.19.4 the client→server abilities packet only has a flags byte (i8).
           // Bit layout: 0x01=invulnerable, 0x02=flying, 0x04=canFly, 0x08=instabuild.
