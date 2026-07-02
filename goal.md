@@ -24,18 +24,24 @@ Bot movement synchronized with camera
 - Respawns at spawn if it dies
 - Goal: Infinite exploration that works on survival AND creative servers
 
-### Phase 3
+### Phase 3 ✅
 Block interaction (breaking/placing)
 - Raycasting for selection
 - Server-validated placement/breaking
-- Respects gamemode rules
+- Respects gamemode rules (survival hold-to-mine, creative instant, adventure/spectator blocked)
+- All four gamemodes functional: creative, survival, adventure, spectator (no-clip)
 
 ### Phase 4
-Polish & completeness
-- Entity rendering (other players, mobs)
-- Inventory/crafting UI
-- Health/hunger display
-- All features adapt to server's gamemode
+Polish & visual completeness — make it feel like the official client
+- [ ] Item entity rendering (floating rotating cubes when blocks are broken)
+- [ ] Camera fluid overlay: blue tint when underwater, orange when in lava
+- [ ] Water/lava block rendering (transparent, currently invisible)
+- [ ] Block breaking animation (crack overlay while mining)
+- [ ] First-person hand/arm model holding held item
+- [ ] Health & hunger HUD (survival mode)
+- [ ] Entity rendering: other players, mobs
+- [ ] Inventory screen (open/close bag, move items)
+- [ ] Spectator: inside-block visual (official client shows darkness/fog, we show chunk void)
 
 ## "Fully Playable" Definition
 Everything the official client offers that applies to the current gamemode:
