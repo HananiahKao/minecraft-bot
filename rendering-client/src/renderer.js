@@ -15,10 +15,10 @@ const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
 
 const CHUNK_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
   vertexColors: true,
-  side: THREE.FrontSide,
+  side: THREE.DoubleSide, // render water faces from both above and below
   transparent: true,
-  opacity: 0.65,
-  depthWrite: false, // don't write to depth buffer so solid blocks behind render correctly
+  opacity: 0.55,
+  depthWrite: true, // write depth so water correctly occludes things behind it
 });
 
 const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });

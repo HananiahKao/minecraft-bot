@@ -182,6 +182,23 @@ function onChunkReceived(chunkData) {
   chunkQueue.push(chunkData);
 }
 
+// Build edge slices from adjacent chunk block data so the worker can cull cross-chunk faces.
+// Each edge is a Map<"y,local" → nameString> for the single-block-wide slice facing this chunk.
+function buildEdges(cx, cz) {
+  const edges = {};
+  const adj = [
+    ['nx', cx - 1, cz, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lx === 15) e.set(`${y},${lz}`, n); } return e; }],
+    ['px', cx + 1, cz, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lx === 0)  e.set(`${y},${lz}`, n); } return e; }],
+    ['nz', cx, cz - 1, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lz === 15) e.set(`${y},${lx}`, n); } return e; }],
+    ['pz', cx, cz + 1, (bm) => { const e = new Map(); for (const [k, n] of bm) { const [lx, y, lz] = k.split(',').map(Number); if (lz === 0)  e.set(`${y},${lx}`, n); } return e; }],
+  ];
+  for (const [dir, nx, nz, extract] of adj) {
+    const bm = _chunkBlockData.get(`${nx},${nz}`);
+    if (bm) edges[dir] = extract(bm);
+  }
+  return edges;
+}
+
 function onBlockUpdate(msg) {
   const cx = Math.floor(msg.x / 16);
   const cz = Math.floor(msg.z / 16);
@@ -206,7 +223,7 @@ function onBlockUpdate(msg) {
   const reserved = (renderer.chunkMeshes.has(ckey) || renderer._updating.has(ckey))
     ? renderer.reserveUpdate(cx, cz)
     : renderer.reserveChunk(cx, cz);
-  if (reserved) worker.postMessage({ x: cx, z: cz, blocks });
+  if (reserved) worker.postMessage({ x: cx, z: cz, blocks, edges: buildEdges(cx, cz) });
 }
 
 function onError(error) {
@@ -379,7 +396,7 @@ function startUpdateLoop() {
       } else {
         reserved = renderer.reserveChunk(x, z);
       }
-      if (reserved) { worker.postMessage({ x, z, blocks }); sent++; }
+      if (reserved) { worker.postMessage({ x, z, blocks, edges: buildEdges(x, z) }); sent++; }
     }
     const _dt_add = performance.now() - _t_add;
 

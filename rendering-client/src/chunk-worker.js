@@ -64,7 +64,7 @@ const BLOCK_COLORS = {
   crafting_table: 0x6b5c3c, chest: 0x8b6f47, barrel: 0x8b6f47,
   smithing_table: 0x6b5c3c, dispenser: 0x6b5c5c, dropper: 0x6b5c5c,
   piston: 0x9b7a5a, sticky_piston: 0xa8845a,
-  water: 0x1a4d7a, bubble_column: 0x2a5a9a, seagrass: 0x2d8659,
+  water: 0x2e6fa8, bubble_column: 0x3a7ab8, seagrass: 0x2d8659,
   tall_seagrass: 0x2d8659, sea_pickle: 0x4b8b3b, kelp_plant: 0x1a6b3a,
   kelp: 0x1a6b3a, lava: 0xff3300,
   grass: 0x3d7d2d, tall_grass: 0x4d8d3d, glow_lichen: 0x6b9b3b,
@@ -144,7 +144,8 @@ function getBlockRGB(name) {
 const _mask = new Uint16Array(16 * 256);
 const _used = new Uint8Array(16 * 256);
 
-function buildChunkArrays(chunkX, chunkZ, blocks) {
+// edges: { nx, px, nz, pz } — each a Map<"y,local" → blockId> for the adjacent chunk's facing slice
+function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
   if (!blocks || blocks.length === 0) return null;
 
   const nameList = [''];
@@ -210,8 +211,24 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let i = 0; i < 6; i++) { nor.push(nx,ny,nz); col.push(r,g,b); }
   }
 
+  function nameToId(name) {
+    if (!name) return 0;
+    let id = nameIndex.get(name);
+    if (id === undefined) {
+      id = nameList.length;
+      nameList.push(name);
+      nameIndex.set(name, id);
+      if (TRANSPARENT_BLOCKS.has(name)) transparentIds.add(id);
+    }
+    return id;
+  }
+
   function gi(x, y, z) {
     if (y < yMin || y > yMax) return 0;
+    if (x < 0)  return nameToId(edges?.nx?.get(`${y},${z}`));
+    if (x > 15) return nameToId(edges?.px?.get(`${y},${z}`));
+    if (z < 0)  return nameToId(edges?.nz?.get(`${y},${x}`));
+    if (z > 15) return nameToId(edges?.pz?.get(`${y},${x}`));
     return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
@@ -259,7 +276,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        const neighbor = z < 15 ? gi(x, y, z+1) : 0;
+        const neighbor = gi(x, y, z+1);
         _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
@@ -276,7 +293,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        const neighbor = z > 0 ? gi(x, y, z-1) : 0;
+        const neighbor = gi(x, y, z-1);
         _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
@@ -293,7 +310,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
-        const neighbor = x < 15 ? gi(x+1, y, z) : 0;
+        const neighbor = gi(x+1, y, z);
         _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
@@ -310,7 +327,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
-        const neighbor = x > 0 ? gi(x-1, y, z) : 0;
+        const neighbor = gi(x-1, y, z);
         _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
@@ -333,8 +350,8 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
   };
 }
 
-self.onmessage = ({ data: { x, z, blocks } }) => {
-  const result = buildChunkArrays(x, z, blocks);
+self.onmessage = ({ data: { x, z, blocks, edges } }) => {
+  const result = buildChunkArrays(x, z, blocks, edges);
   if (!result) {
     self.postMessage({ x, z, empty: true });
     return;
