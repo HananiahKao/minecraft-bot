@@ -17,7 +17,7 @@ export class BridgeConnection {
     this.maxReconnectAttempts = 5;
   }
 
-  connect(url = 'ws://localhost:8080') {
+  connect(url = `ws://${window.location.hostname}:8080`) {
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(url);

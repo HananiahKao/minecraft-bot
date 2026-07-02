@@ -35,6 +35,52 @@ export class InputHandler {
     this.registerEventListeners();
   }
 
+  // Called by mobile overlay buttons to set movement/action state
+  setControl(name, active) {
+    if (name in this.controls) { this.controls[name] = active; return; }
+    if (name === 'breakBlock') { this._breakHeld = active; return; }
+    if (name === 'placePending' && active) { this._placePending = true; return; }
+    if (name === 'pickPending'  && active) { this._pickPending  = true; return; }
+    if (name === 'flyToggle'    && active) { this._flyToggle    = true; return; }
+  }
+
+  // Sets up touch-based camera look for mobile (pointer lock unavailable on iOS).
+  // A touch starting on the right 60% of the screen becomes the look touch.
+  // Separate from the D-pad which lives on the left 40%.
+  setupTouchLook() {
+    let lookId = null, lastX = 0, lastY = 0;
+    const canvas = document.getElementById('canvas');
+    const LOOK_THRESHOLD = 0.4; // touches starting left of this fraction go to D-pad
+
+    canvas.addEventListener('touchstart', (e) => {
+      for (const t of e.changedTouches) {
+        if (lookId === null && t.clientX / window.innerWidth > LOOK_THRESHOLD) {
+          lookId = t.identifier; lastX = t.clientX; lastY = t.clientY;
+        }
+      }
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      for (const t of e.changedTouches) {
+        if (t.identifier === lookId) {
+          this._pendingDX += t.clientX - lastX;
+          this._pendingDY += t.clientY - lastY;
+          lastX = t.clientX; lastY = t.clientY;
+          this.lastMouseMoveTime = performance.now();
+        }
+      }
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (e) => {
+      for (const t of e.changedTouches) if (t.identifier === lookId) lookId = null;
+    });
+    canvas.addEventListener('touchcancel', (e) => {
+      for (const t of e.changedTouches) if (t.identifier === lookId) lookId = null;
+    });
+  }
+
   registerEventListeners() {
     const keyMap = {
       'w': 'forward', 'arrowup': 'forward',

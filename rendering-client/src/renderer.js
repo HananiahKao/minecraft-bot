@@ -7,6 +7,7 @@
  */
 
 import * as THREE from 'three';
+import { isMobile } from './mobile.js';
 
 const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
   vertexColors: true,
@@ -40,7 +41,8 @@ export class MinecraftRenderer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Mobile: cap at 1.0 — Retina 2x would quadruple fragment work with 1.65M vertices
+    this.renderer.setPixelRatio(isMobile() ? Math.min(window.devicePixelRatio, 1) : window.devicePixelRatio);
     this.renderer.shadowMap.enabled = false;
     container.appendChild(this.renderer.domElement);
 

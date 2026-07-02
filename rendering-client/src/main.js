@@ -7,6 +7,7 @@
 import { MinecraftRenderer } from './renderer.js';
 import { InputHandler } from './input.js';
 import { BridgeConnection } from './connection.js';
+import { setupMobileControls } from './mobile.js';
 
 let renderer = null;
 let inputHandler = null;
@@ -82,6 +83,8 @@ function init() {
     if (!_loadPhaseStart) _loadPhaseStart = performance.now();
     _loadPhaseRecorded = false;
   };
+
+  setupMobileControls(inputHandler);
 
   connection.connect().catch((err) => {
     console.error('Failed to connect:', err.message);
