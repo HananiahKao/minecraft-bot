@@ -392,20 +392,34 @@ wss.on('connection', (ws) => {
         const isSpectator = bot.game && bot.game.gameMode === 'spectator';
 
         if (isSpectator) {
-          // Spectator: always flying, no toggle needed. Space=up, Shift=down.
-          // Force gravity to 0 every tick — the physics engine can restore it between ticks.
+          // Spectator: true no-clip by bypassing the physics engine entirely.
+          // setControlState goes through collision detection; directly updating
+          // bot.entity.position skips it, matching vanilla spectator behavior.
           bot.entity.isFlying = true;
           bot.physics.gravity = 0;
-          bot.entity.velocity.y = 0; // clear any residual fall velocity first
-          const flyControls = ['forward', 'back', 'left', 'right', 'sprint'];
-          for (const control of flyControls) {
-            if (control in controls) bot.setControlState(control, !!controls[control]);
-          }
-          const FLY_SPEED_Y = 0.25;
-          if (controls.jump && !controls.sneak)       bot.entity.velocity.y = FLY_SPEED_Y;
-          else if (controls.sneak && !controls.jump)  bot.entity.velocity.y = -FLY_SPEED_Y;
-          bot.setControlState('jump',  !!controls.jump);
-          bot.setControlState('sneak', !!controls.sneak);
+          bot.entity.velocity.set(0, 0, 0); // prevent physics engine from moving the bot
+
+          // Clear all control states so the physics tick doesn't add its own movement
+          ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'].forEach(c => {
+            try { bot.setControlState(c, false); } catch (_) {}
+          });
+
+          // Vanilla spectator: WASD moves horizontally in the direction you're facing,
+          // Space/Shift move vertically. Sprint multiplies speed by 2 (vanilla approximation).
+          const BASE_SPEED = 0.05; // blocks/tick, matches abilities flyingSpeed
+          const speed = controls.sprint ? BASE_SPEED * 2 : BASE_SPEED;
+
+          let dx = 0, dz = 0, dy = 0;
+          if (controls.forward) { dx -= Math.sin(yaw) * speed; dz -= Math.cos(yaw) * speed; }
+          if (controls.back)    { dx += Math.sin(yaw) * speed; dz += Math.cos(yaw) * speed; }
+          if (controls.left)    { dx -= Math.cos(yaw) * speed; dz += Math.sin(yaw) * speed; }
+          if (controls.right)   { dx += Math.cos(yaw) * speed; dz -= Math.sin(yaw) * speed; }
+          if (controls.jump && !controls.sneak)      dy =  speed * 2;
+          else if (controls.sneak && !controls.jump) dy = -speed * 2;
+
+          bot.entity.position.x += dx;
+          bot.entity.position.y += dy;
+          bot.entity.position.z += dz;
         } else if (isCreative) {
           // flyToggle is a one-shot signal from the client, set on double-tap Space.
           // In 1.19.4 the client→server abilities packet only has a flags byte (i8).
