@@ -21,6 +21,7 @@ let lastBotChunkZ = null;
 const rawChunkQueue = [];       // raw JSON strings — parsed lazily in frame loop
 const chunkQueue = [];          // parsed chunk objects waiting to be added to scene
 const unloadQueue = [];         // [chunkX, chunkZ] pairs waiting to be removed
+const _chunkBlockData = new Map(); // chunkKey → Map<"lx,y,lz", name> — kept in sync for fast block updates
 
 // ── Event log ────────────────────────────────────────────────────────────────
 const EVENT_MAX = 100;
@@ -181,6 +182,33 @@ function onChunkReceived(chunkData) {
   chunkQueue.push(chunkData);
 }
 
+function onBlockUpdate(msg) {
+  const cx = Math.floor(msg.x / 16);
+  const cz = Math.floor(msg.z / 16);
+  const ckey = `${cx},${cz}`;
+  const blockMap = _chunkBlockData.get(ckey);
+  if (!blockMap) return; // chunk not loaded — ignore, it'll arrive in full when loaded
+
+  // Convert world coords to local chunk coords (handles negative world coords)
+  const lx = ((msg.x % 16) + 16) % 16;
+  const lz = ((msg.z % 16) + 16) % 16;
+  const bkey = `${lx},${msg.y},${lz}`;
+
+  if (msg.name === 'air') blockMap.delete(bkey);
+  else blockMap.set(bkey, msg.name);
+
+  // Immediately rebuild the chunk from the updated local data
+  const blocks = [];
+  for (const [k, name] of blockMap) {
+    const [x, y, z] = k.split(',').map(Number);
+    blocks.push({ x, y, z, name });
+  }
+  const reserved = (renderer.chunkMeshes.has(ckey) || renderer._updating.has(ckey))
+    ? renderer.reserveUpdate(cx, cz)
+    : renderer.reserveChunk(cx, cz);
+  if (reserved) worker.postMessage({ x: cx, z: cz, blocks });
+}
+
 function onError(error) {
   console.error('Bridge error:', error.message);
   updateStatus(`Error: ${error.message}`);
@@ -304,10 +332,15 @@ function startUpdateLoop() {
         try {
           const msg = JSON.parse(raw);
           chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
+          // Store block data for fast single-block updates
+          const ckey = `${msg.x},${msg.z}`;
+          const blockMap = new Map();
+          for (const b of msg.blocks) blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
+          _chunkBlockData.set(ckey, blockMap);
         } catch (e) {}
         rawChunkQueue.splice(i, 1);
       } else {
-        // Small message (position, ready, error) — parse and dispatch now
+        // Small message (position, ready, error, block_update) — parse and dispatch now
         try {
           const msg = JSON.parse(raw);
           if (msg.type === 'bot_position') onBotPosition(msg.position);
@@ -315,6 +348,7 @@ function startUpdateLoop() {
           else if (msg.type === 'hotbar') onHotbar(msg.slots, msg.heldSlot);
           else if (msg.type === 'held_slot') onHeldSlot(msg.slot);
           else if (msg.type === 'error') onError(new Error(msg.message));
+          else if (msg.type === 'block_update') onBlockUpdate(msg);
         } catch (e) {}
         rawChunkQueue.splice(i, 1);
       }

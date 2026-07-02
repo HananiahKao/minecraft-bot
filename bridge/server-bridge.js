@@ -111,40 +111,17 @@ function initBot() {
     }
   });
 
-  // Re-broadcast the affected chunk column when a block changes.
-  // Player-broken blocks broadcast immediately; other world ticks (grass spread,
-  // physics) are debounced at 200ms to collapse rapid consecutive updates.
-  const _blockUpdateTimers = new Map();
+  // Send a lightweight block_update message for each block change.
+  // The client stores block data per chunk and rebuilds only the affected chunk,
+  // avoiding the cost of re-scanning and re-sending an entire chunk column.
   bot.on('blockUpdate', (oldBlock, newBlock) => {
     if (!connectedClients.length) return;
     const pos = newBlock.position;
-    const cx = Math.floor(pos.x / 16);
-    const cz = Math.floor(pos.z / 16);
-    const key = `${cx},${cz}`;
-
-    // If this is the block the bot just dug, skip the debounce entirely.
-    const isOurDig = _digTarget === `${pos.x},${pos.y},${pos.z}`;
-    if (isOurDig) {
-      if (_blockUpdateTimers.has(key)) {
-        clearTimeout(_blockUpdateTimers.get(key));
-        _blockUpdateTimers.delete(key);
-      }
-      try {
-        const col = bot.world.getColumn(cx, cz);
-        if (col) broadcastChunk(cx, cz, col);
-      } catch (e) {}
-      return;
-    }
-
-    if (_blockUpdateTimers.has(key)) return;
-    _blockUpdateTimers.set(key, setTimeout(() => {
-      _blockUpdateTimers.delete(key);
-      if (!connectedClients.length) return;
-      try {
-        const col = bot.world.getColumn(cx, cz);
-        if (col) broadcastChunk(cx, cz, col);
-      } catch (e) {}
-    }, 200));
+    broadcastMessage({
+      type: 'block_update',
+      x: pos.x, y: pos.y, z: pos.z,
+      name: newBlock.name || 'air'
+    });
   });
 
   bot.on('playerCollect', () => broadcastHotbar());
