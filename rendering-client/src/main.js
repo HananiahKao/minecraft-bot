@@ -114,7 +114,7 @@ function onBotReady(position, gameMode) {
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
   // survival/adventure: 4.5 block reach; creative: 5 blocks
   renderer.setReach(gameMode === 'creative' ? 5 : 4.5);
-  updateStatus(`🎮 Playing | Chunks: ${renderer.chunkMeshes.size}`);
+  updateStatus(`🎮 Playing | Chunks: ${renderer.loadedChunks}`);
   const cx = Math.floor(position[0] / 16);
   const cz = Math.floor(position[2] / 16);
   lastBotChunkX = cx;
@@ -465,7 +465,7 @@ function startUpdateLoop() {
       if (_currentFps > 0 && _currentFps < _minFps) _minFps = _currentFps;
     }
     if (_frameTotal > 33) {
-      console.log(`[FRAME-CPU ${wallClock()}] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.chunkMeshes.size} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
+      console.log(`[FRAME-CPU ${wallClock()}] total=${_frameTotal.toFixed(1)}ms parse=${_dt_parse.toFixed(1)} add=${_dt_add.toFixed(1)} unload=${_dt_unload.toFixed(1)} render=${_dt_render.toFixed(1)} | chunks=${renderer.loadedChunks} fps=${_currentFps} raw=${rawChunkQueue.length} q=${chunkQueue.length}`);
     }
 
     // Detect when initial load phase ends (all queues and pending worker jobs drained)
@@ -485,7 +485,7 @@ function startUpdateLoop() {
         idleMs:  _snapIdleCount  > 0 ? (_snapIdleSum  / _snapIdleCount).toFixed(0)  : '—',
         mouseMs: _snapMouseCount > 0 ? (_snapMouseSum / _snapMouseCount).toFixed(0) : '—',
         violPct: _snapFrames > 0 ? (_snapViolations / _snapFrames * 100).toFixed(0) : '0',
-        chunks: renderer ? renderer.chunkMeshes.size : 0,
+        chunks: renderer ? renderer.loadedChunks : 0,
         pending: renderer ? renderer._pending.size : 0,
       };
       _snapshots.push(snap);
@@ -505,9 +505,9 @@ function startUpdateLoop() {
     const tb = renderer.targetedBlock;
     const targetStr = tb ? ` | ${tb.x} ${tb.y} ${tb.z}` : '';
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size} (+${chunkQueue.length} load, -${unloadQueue.length} unload)${targetStr}`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.loadedChunks} (+${chunkQueue.length} load, -${unloadQueue.length} unload)${targetStr}`);
     } else {
-      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.chunkMeshes.size}${targetStr}`);
+      updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.loadedChunks}${targetStr}`);
     }
 
   };
@@ -537,7 +537,7 @@ function updateMetrics() {
   const minFpsStr    = _minFps === Infinity ? '—' : _minFps;
   const loadStr      = _initialLoadMs != null ? `${(_initialLoadMs / 1000).toFixed(1)}s` : (_loadPhaseStart ? 'loading...' : '—');
   const vertStr      = _totalVertices > 0 ? `${(_totalVertices / 1e6).toFixed(2)}M` : '0';
-  const chunkCount   = renderer ? renderer.chunkMeshes.size : 0;
+  const chunkCount   = renderer ? renderer.loadedChunks : 0;
   const pendingCount = renderer ? renderer._pending.size : 0;
 
   const unknownList = Array.from(_unknownBlocks).sort();

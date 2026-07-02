@@ -142,6 +142,9 @@ export class MinecraftRenderer {
     if (meshT) { this.scene.remove(meshT); meshT.geometry.dispose(); this.chunkMeshesT.delete(key); }
   }
 
+  // Chunks that are fully in scene OR being rebuilt (old mesh still visible) — never drops during seam-fix rebuilds
+  get loadedChunks() { return this.chunkMeshes.size + this._updating.size; }
+
   get totalVertices() {
     let n = 0;
     for (const mesh of this.chunkMeshes.values())
