@@ -360,6 +360,7 @@ function startUpdateLoop() {
     while (unloadQueue.length > 0) {
       const [kx, kz] = unloadQueue.shift();
       renderer.removeChunk(kx, kz);
+      _chunkBlockData.delete(`${kx},${kz}`);
     }
     const _dt_unload = performance.now() - _t_unload;
 
