@@ -112,7 +112,8 @@ function initBot() {
   });
 
   // Re-broadcast the affected chunk column when a block changes.
-  // Debounced per chunk key — rapid world ticks (grass, physics) collapse into one send.
+  // Player-broken blocks broadcast immediately; other world ticks (grass spread,
+  // physics) are debounced at 200ms to collapse rapid consecutive updates.
   const _blockUpdateTimers = new Map();
   bot.on('blockUpdate', (oldBlock, newBlock) => {
     if (!connectedClients.length) return;
@@ -120,6 +121,21 @@ function initBot() {
     const cx = Math.floor(pos.x / 16);
     const cz = Math.floor(pos.z / 16);
     const key = `${cx},${cz}`;
+
+    // If this is the block the bot just dug, skip the debounce entirely.
+    const isOurDig = _digTarget === `${pos.x},${pos.y},${pos.z}`;
+    if (isOurDig) {
+      if (_blockUpdateTimers.has(key)) {
+        clearTimeout(_blockUpdateTimers.get(key));
+        _blockUpdateTimers.delete(key);
+      }
+      try {
+        const col = bot.world.getColumn(cx, cz);
+        if (col) broadcastChunk(cx, cz, col);
+      } catch (e) {}
+      return;
+    }
+
     if (_blockUpdateTimers.has(key)) return;
     _blockUpdateTimers.set(key, setTimeout(() => {
       _blockUpdateTimers.delete(key);
@@ -128,7 +144,7 @@ function initBot() {
         const col = bot.world.getColumn(cx, cz);
         if (col) broadcastChunk(cx, cz, col);
       } catch (e) {}
-    }, 100));
+    }, 200));
   });
 
   bot.on('playerCollect', () => broadcastHotbar());
