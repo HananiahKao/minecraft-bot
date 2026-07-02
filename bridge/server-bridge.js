@@ -290,7 +290,7 @@ wss.on('connection', (ws) => {
         if (slot >= 0 && slot <= 8) {
           bot.setQuickBarSlot(slot);
         }
-      } else if (message.type === 'pick_block' && botReady && bot) {
+      } else if (message.type === 'pick_block' && botReady && bot && bot.game && bot.game.gameMode === 'creative') {
         if (!_pickInProgress) {
           _pickInProgress = true;
           const { x, y, z } = message.block;
