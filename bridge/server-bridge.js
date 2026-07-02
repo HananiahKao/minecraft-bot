@@ -37,7 +37,18 @@ let _pickInProgress = false;
 let _digInProgress = false;
 let _digTarget = null;
 let _serverCanFly = false;
+let _reconnectScheduled = false;
 
+
+function scheduleReconnect() {
+  if (_reconnectScheduled) return;
+  _reconnectScheduled = true;
+  setTimeout(() => {
+    _reconnectScheduled = false;
+    console.log('Attempting to reconnect...');
+    initBot();
+  }, 2000);
+}
 
 function initBot() {
   console.log(`🤖 Connecting to ${MINECRAFT_HOST}:${MINECRAFT_PORT} as "${BOT_USERNAME}"...`);
@@ -150,10 +161,7 @@ function initBot() {
     // 'end' fires after most errors, but ECONNREFUSED only fires 'error' — schedule
     // a retry here too so a failed connection attempt doesn't silently stop retrying.
     if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
-      setTimeout(() => {
-        console.log('Attempting to reconnect after connection error...');
-        initBot();
-      }, 2000);
+      scheduleReconnect();
     }
   });
 
@@ -164,10 +172,7 @@ function initBot() {
       clearInterval(positionBroadcastInterval);
       positionBroadcastInterval = null;
     }
-    setTimeout(() => {
-      console.log('Attempting to reconnect...');
-      initBot();
-    }, 2000);
+    scheduleReconnect();
   });
 }
 
