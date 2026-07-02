@@ -158,7 +158,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
   // Grid indexed by (x, z, y-yMin) so negative Y works without remapping
   const grid = new Uint16Array(16 * 16 * yRange);
   // Track which block IDs are transparent for culling
-  const transparentIds = new Set([0]); // 0 = air, always transparent
+  const transparentIds = new Set(); // non-air transparent block ids (water, glass, etc.)
   for (const { x, y, z, name } of blocks) {
     let id = nameIndex.get(name);
     if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
@@ -217,6 +217,8 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
 
   // A neighbor blocks a face only if it is solid (non-zero and not transparent)
   function isSolid(id) { return id !== 0 && !transparentIds.has(id); }
+  // Suppress internal faces between two transparent blocks of the same kind (e.g. water-water)
+  function suppressTransparent(bt, neighbor) { return neighbor !== 0 && transparentIds.has(bt) && transparentIds.has(neighbor); }
 
   // TOP +Y
   for (let y = yMin; y <= yMax; y++) {
@@ -224,7 +226,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = y < yMax ? gi(x, y+1, z) : 0;
-        _mask[x + z*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[x + z*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -241,7 +243,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = y > yMin ? gi(x, y-1, z) : 0;
-        _mask[x + z*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[x + z*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -258,7 +260,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = z < 15 ? gi(x, y, z+1) : 0;
-        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -275,7 +277,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = z > 0 ? gi(x, y, z-1) : 0;
-        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -292,7 +294,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
         const neighbor = x < 15 ? gi(x+1, y, z) : 0;
-        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -309,7 +311,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
         const neighbor = x > 0 ? gi(x-1, y, z) : 0;
-        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
+        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
