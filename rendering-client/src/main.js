@@ -73,7 +73,7 @@ function init() {
     if (data.empty) return;
     if (data.unknown) data.unknown.forEach(n => _unknownBlocks.add(n));
     const t0 = performance.now();
-    renderer.applyChunkGeometry(data.x, data.z, data.positions, data.normals, data.colors);
+    renderer.applyChunkGeometry(data.x, data.z, data.positions, data.normals, data.colors, data.tPositions, data.tNormals, data.tColors);
     _chunkBuildTimes.push(performance.now() - t0);
     _totalVertices = renderer.totalVertices;
     if (!_loadPhaseStart) _loadPhaseStart = performance.now();

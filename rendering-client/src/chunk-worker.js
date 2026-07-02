@@ -106,6 +106,20 @@ const BLOCK_COLORS = {
   bee_nest: 0xc8a951, bell: 0xffd700,
 };
 
+// Blocks that don't occlude neighbors — faces adjacent to these are always rendered.
+// Also rendered with transparency in a separate mesh pass.
+const TRANSPARENT_BLOCKS = new Set([
+  'water', 'flowing_water', 'bubble_column',
+  'glass', 'glass_pane',
+  'white_stained_glass', 'orange_stained_glass', 'magenta_stained_glass',
+  'light_blue_stained_glass', 'yellow_stained_glass', 'lime_stained_glass',
+  'pink_stained_glass', 'gray_stained_glass', 'light_gray_stained_glass',
+  'cyan_stained_glass', 'purple_stained_glass', 'blue_stained_glass',
+  'brown_stained_glass', 'green_stained_glass', 'red_stained_glass',
+  'black_stained_glass', 'white_stained_glass_pane', 'orange_stained_glass_pane',
+  'ice', 'frosted_ice',
+]);
+
 const colorCache = new Map();
 
 const _unknownBlocks = new Set(); // reported back to main thread
@@ -143,15 +157,21 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
   const yRange = yMax - yMin + 1;
   // Grid indexed by (x, z, y-yMin) so negative Y works without remapping
   const grid = new Uint16Array(16 * 16 * yRange);
+  // Track which block IDs are transparent for culling
+  const transparentIds = new Set([0]); // 0 = air, always transparent
   for (const { x, y, z, name } of blocks) {
     let id = nameIndex.get(name);
     if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
+    if (TRANSPARENT_BLOCKS.has(name)) transparentIds.add(id);
     grid[x + z * 16 + (y - yMin) * 16 * 16] = id;
   }
 
-  const positions = [];
+  const positions = [];      // opaque geometry
   const normals = [];
   const colors = [];
+  const tPositions = [];     // transparent geometry
+  const tNormals = [];
+  const tColors = [];
   const bxBase = chunkX * 16;
   const bzBase = chunkZ * 16;
 
@@ -180,11 +200,14 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     }
   }
 
-  function pushFace(nx, ny, nz, r, g, b,
+  function pushFace(isTransparent, nx, ny, nz, r, g, b,
     ax, ay, az, bx, by, bz, cx, cy, cz,
     dx, dy, dz, ex, ey, ez, fx, fy, fz) {
-    positions.push(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, ex,ey,ez, fx,fy,fz);
-    for (let i = 0; i < 6; i++) { normals.push(nx,ny,nz); colors.push(r,g,b); }
+    const pos = isTransparent ? tPositions : positions;
+    const nor = isTransparent ? tNormals   : normals;
+    const col = isTransparent ? tColors    : colors;
+    pos.push(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, ex,ey,ez, fx,fy,fz);
+    for (let i = 0; i < 6; i++) { nor.push(nx,ny,nz); col.push(r,g,b); }
   }
 
   function gi(x, y, z) {
@@ -192,17 +215,21 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
+  // A neighbor blocks a face only if it is solid (non-zero and not transparent)
+  function isSolid(id) { return id !== 0 && !transparentIds.has(id); }
+
   // TOP +Y
   for (let y = yMin; y <= yMax; y++) {
     for (let z = 0; z < 16; z++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        _mask[x + z*16] = (bt && !(y < yMax && gi(x, y+1, z))) ? bt : 0;
+        const neighbor = y < yMax ? gi(x, y+1, z) : 0;
+        _mask[x + z*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X0=bxBase+i0, Y=y+1, Z0=bzBase+j0;
-      pushFace(0,1,0, r,g,b,
+      pushFace(transparentIds.has(t), 0,1,0, r,g,b,
         X0,Y,Z0+h, X0+w,Y,Z0, X0,Y,Z0,
         X0,Y,Z0+h, X0+w,Y,Z0+h, X0+w,Y,Z0);
     });
@@ -213,12 +240,13 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let z = 0; z < 16; z++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        _mask[x + z*16] = (bt && !(y > yMin && gi(x, y-1, z))) ? bt : 0;
+        const neighbor = y > yMin ? gi(x, y-1, z) : 0;
+        _mask[x + z*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X0=bxBase+i0, Y=y, Z0=bzBase+j0;
-      pushFace(0,-1,0, r,g,b,
+      pushFace(transparentIds.has(t), 0,-1,0, r,g,b,
         X0,Y,Z0, X0+w,Y,Z0, X0,Y,Z0+h,
         X0+w,Y,Z0, X0+w,Y,Z0+h, X0,Y,Z0+h);
     });
@@ -229,12 +257,13 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        _mask[x + (y-yMin)*16] = (bt && !(z < 15 && gi(x, y, z+1))) ? bt : 0;
+        const neighbor = z < 15 ? gi(x, y, z+1) : 0;
+        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X0=bxBase+i0, Y0=yMin+j0, Z=bzBase+z+1;
-      pushFace(0,0,1, r,g,b,
+      pushFace(transparentIds.has(t), 0,0,1, r,g,b,
         X0,Y0,Z, X0+w,Y0,Z, X0,Y0+h,Z,
         X0+w,Y0,Z, X0+w,Y0+h,Z, X0,Y0+h,Z);
     });
@@ -245,12 +274,13 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
-        _mask[x + (y-yMin)*16] = (bt && !(z > 0 && gi(x, y, z-1))) ? bt : 0;
+        const neighbor = z > 0 ? gi(x, y, z-1) : 0;
+        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X0=bxBase+i0, Y0=yMin+j0, Z=bzBase+z;
-      pushFace(0,0,-1, r,g,b,
+      pushFace(transparentIds.has(t), 0,0,-1, r,g,b,
         X0+w,Y0,Z, X0,Y0,Z, X0+w,Y0+h,Z,
         X0,Y0,Z, X0,Y0+h,Z, X0+w,Y0+h,Z);
     });
@@ -261,12 +291,13 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
-        _mask[z + (y-yMin)*16] = (bt && !(x < 15 && gi(x+1, y, z))) ? bt : 0;
+        const neighbor = x < 15 ? gi(x+1, y, z) : 0;
+        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X=bxBase+x+1, Y0=yMin+j0, Z0=bzBase+i0;
-      pushFace(1,0,0, r,g,b,
+      pushFace(transparentIds.has(t), 1,0,0, r,g,b,
         X,Y0,Z0+w, X,Y0,Z0, X,Y0+h,Z0,
         X,Y0,Z0+w, X,Y0+h,Z0, X,Y0+h,Z0+w);
     });
@@ -277,22 +308,26 @@ function buildChunkArrays(chunkX, chunkZ, blocks) {
     for (let y = yMin; y <= yMax; y++)
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
-        _mask[z + (y-yMin)*16] = (bt && !(x > 0 && gi(x-1, y, z))) ? bt : 0;
+        const neighbor = x > 0 ? gi(x-1, y, z) : 0;
+        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !(transparentIds.has(bt) && transparentIds.has(neighbor))) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
       const X=bxBase+x, Y0=yMin+j0, Z0=bzBase+i0;
-      pushFace(-1,0,0, r,g,b,
+      pushFace(transparentIds.has(t), -1,0,0, r,g,b,
         X,Y0,Z0, X,Y0,Z0+w, X,Y0+h,Z0+w,
         X,Y0,Z0, X,Y0+h,Z0+w, X,Y0+h,Z0);
     });
   }
 
-  if (positions.length === 0) return null;
+  if (positions.length === 0 && tPositions.length === 0) return null;
   return {
-    positions: new Float32Array(positions),
-    normals:   new Float32Array(normals),
-    colors:    new Float32Array(colors),
+    positions:  positions.length  ? new Float32Array(positions)  : null,
+    normals:    normals.length     ? new Float32Array(normals)    : null,
+    colors:     colors.length      ? new Float32Array(colors)     : null,
+    tPositions: tPositions.length  ? new Float32Array(tPositions) : null,
+    tNormals:   tNormals.length    ? new Float32Array(tNormals)   : null,
+    tColors:    tColors.length     ? new Float32Array(tColors)    : null,
   };
 }
 
@@ -303,8 +338,12 @@ self.onmessage = ({ data: { x, z, blocks } }) => {
     return;
   }
   const unknown = _unknownBlocks.size > 0 ? Array.from(_unknownBlocks) : null;
-  self.postMessage(
-    { x, z, positions: result.positions, normals: result.normals, colors: result.colors, unknown },
-    [result.positions.buffer, result.normals.buffer, result.colors.buffer]
-  );
+  const transferable = [];
+  if (result.positions)  transferable.push(result.positions.buffer);
+  if (result.normals)    transferable.push(result.normals.buffer);
+  if (result.colors)     transferable.push(result.colors.buffer);
+  if (result.tPositions) transferable.push(result.tPositions.buffer);
+  if (result.tNormals)   transferable.push(result.tNormals.buffer);
+  if (result.tColors)    transferable.push(result.tColors.buffer);
+  self.postMessage({ x, z, ...result, unknown }, transferable);
 };

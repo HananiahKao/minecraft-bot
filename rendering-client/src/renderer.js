@@ -13,6 +13,14 @@ const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
   side: THREE.FrontSide,
 });
 
+const CHUNK_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  side: THREE.FrontSide,
+  transparent: true,
+  opacity: 0.65,
+  depthWrite: false, // don't write to depth buffer so solid blocks behind render correctly
+});
+
 const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
 // Unit cube edges (12 lines × 2 vertices)
 const _BOX_EDGES = (() => {
@@ -38,12 +46,15 @@ export class MinecraftRenderer {
 
     this.setupLighting();
 
-    // key "x,z" → THREE.Mesh (loaded chunks)
+    // key "x,z" → THREE.Mesh (loaded chunks, opaque)
     this.chunkMeshes = new Map();
+    // key "x,z" → THREE.Mesh (loaded chunks, transparent — water/glass)
+    this.chunkMeshesT = new Map();
     // key "x,z" → in-flight to worker (initial load or update)
     this._pending = new Set();
     // key "x,z" → THREE.Mesh being replaced — stays in scene until applyChunkGeometry swaps it
     this._updating = new Map();
+    this._updatingT = new Map();
 
     this._raycaster = new THREE.Raycaster();
     this._raycaster.near = 0.1;
@@ -81,40 +92,52 @@ export class MinecraftRenderer {
   reserveUpdate(chunkX, chunkZ) {
     const key = `${chunkX},${chunkZ}`;
     const existing = this.chunkMeshes.get(key);
-    if (existing) {
-      this._updating.set(key, existing); // keep visible in scene until swap
-      this.chunkMeshes.delete(key);
-    }
-    this._pending.add(key); // idempotent on Set — duplicate worker messages are fine
+    if (existing) { this._updating.set(key, existing); this.chunkMeshes.delete(key); }
+    const existingT = this.chunkMeshesT.get(key);
+    if (existingT) { this._updatingT.set(key, existingT); this.chunkMeshesT.delete(key); }
+    this._pending.add(key);
     return true;
   }
 
-  // Called from worker onmessage — creates mesh from pre-built typed arrays.
-  applyChunkGeometry(chunkX, chunkZ, positions, normals, colors) {
+  // Called from worker onmessage — creates opaque + transparent meshes from pre-built typed arrays.
+  applyChunkGeometry(chunkX, chunkZ, positions, normals, colors, tPositions, tNormals, tColors) {
     const key = `${chunkX},${chunkZ}`;
     this._pending.delete(key);
 
-    // Remove old mesh — either a live-update placeholder or a stale loaded mesh
+    // Swap out old opaque mesh
     const old = this._updating.get(key) || this.chunkMeshes.get(key);
     if (old) { this.scene.remove(old); old.geometry.dispose(); this._updating.delete(key); }
+    if (positions) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
+      geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+      const mesh = new THREE.Mesh(geo, CHUNK_MATERIAL);
+      this.scene.add(mesh);
+      this.chunkMeshes.set(key, mesh);
+    }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
-    geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
-    const mesh = new THREE.Mesh(geo, CHUNK_MATERIAL);
-    this.scene.add(mesh);
-    this.chunkMeshes.set(key, mesh);
+    // Swap out old transparent mesh
+    const oldT = this._updatingT.get(key) || this.chunkMeshesT.get(key);
+    if (oldT) { this.scene.remove(oldT); oldT.geometry.dispose(); this._updatingT.delete(key); }
+    if (tPositions) {
+      const geoT = new THREE.BufferGeometry();
+      geoT.setAttribute('position', new THREE.BufferAttribute(tPositions, 3));
+      geoT.setAttribute('normal',   new THREE.BufferAttribute(tNormals,   3));
+      geoT.setAttribute('color',    new THREE.BufferAttribute(tColors,    3));
+      const meshT = new THREE.Mesh(geoT, CHUNK_TRANSPARENT_MATERIAL);
+      this.scene.add(meshT);
+      this.chunkMeshesT.set(key, meshT);
+    }
   }
 
   removeChunk(chunkX, chunkZ) {
     const key = `${chunkX},${chunkZ}`;
     this._pending.delete(key);
     const mesh = this.chunkMeshes.get(key);
-    if (!mesh) return;
-    this.scene.remove(mesh);
-    mesh.geometry.dispose();
-    this.chunkMeshes.delete(key);
+    if (mesh) { this.scene.remove(mesh); mesh.geometry.dispose(); this.chunkMeshes.delete(key); }
+    const meshT = this.chunkMeshesT.get(key);
+    if (meshT) { this.scene.remove(meshT); meshT.geometry.dispose(); this.chunkMeshesT.delete(key); }
   }
 
   get totalVertices() {
