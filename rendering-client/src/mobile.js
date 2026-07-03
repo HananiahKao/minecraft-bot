@@ -61,6 +61,7 @@ function injectOverlay(inp) {
   wire('mb-sneak',  'sneak');
   wire('mb-break',  'breakBlock');
   wire('mb-sprint', 'sprint', true);
+  wire('mb-inv',    'inventoryToggle', true);
 
   // Place is a one-shot tap
   const placeEl = document.getElementById('mb-place');
@@ -115,10 +116,11 @@ function buildHTML() {
     `right:${r}px;bottom:${b}px;width:${w}px;height:${h}px;`;
 
   const actions =
-    btn('mb-jump',  '🦘', absr(rR + G,    rB + G * 2)) +   // top-centre
-    btn('mb-break', '⛏️',  absr(rR + G * 2, rB + G)) +      // mid-left
-    btn('mb-place', '🧱', absr(rR,         rB + G)) +        // mid-right
-    btn('mb-sneak', '🦆', absr(rR + G,    rB));              // bottom-centre
+    btn('mb-jump',  '🦘', absr(rR + G,     rB + G * 2)) +   // top-centre
+    btn('mb-break', '⛏️',  absr(rR + G * 2, rB + G)) +       // mid-left
+    btn('mb-place', '🧱', absr(rR,          rB + G)) +        // mid-right
+    btn('mb-sneak', '🦆', absr(rR + G,     rB)) +             // bottom-centre
+    btn('mb-inv',   '🎒', absr(rR + G * 2, rB + G * 2));     // top-left (inventory)
 
   return dpad + actions;
 }

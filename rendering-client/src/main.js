@@ -8,6 +8,7 @@ import { MinecraftRenderer } from './renderer.js';
 import { InputHandler } from './input.js';
 import { BridgeConnection } from './connection.js';
 import { setupMobileControls } from './mobile.js';
+import { InventoryScreen } from './inventory.js';
 
 let renderer = null;
 let inputHandler = null;
@@ -15,6 +16,7 @@ let connection = null;
 let worker = null;
 let _hotbarSlots = Array(9).fill(null); // { name, count } or null
 let _heldSlot = 0;
+let _inventoryScreen = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 let lastBotChunkX = null;
@@ -59,13 +61,19 @@ function init() {
   renderer = new MinecraftRenderer(container);
   inputHandler = new InputHandler(renderer.camera);
 
+  _inventoryScreen = new InventoryScreen({
+    onClose: () => { /* pointer lock re-acquired on next canvas click */ },
+    onClickSlot: (slot, button) => connection && connection.sendClickSlot(slot, button),
+  });
+
   connection = new BridgeConnection(
     onChunkReceived,
     onBotReady,
     onBotPosition,
     onError,
     onHotbar,
-    onHeldSlot
+    onHeldSlot,
+    onInventory
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
@@ -97,7 +105,17 @@ function init() {
       const tb = renderer ? renderer.targetedBlock : null;
       const tf = renderer ? renderer.targetedFace : null;
       const controls = inputHandler.getControls();
-      connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb, tf);
+      if (controls.inventoryToggle && _inventoryScreen) {
+        if (_inventoryScreen.isOpen()) {
+          _inventoryScreen.close();
+        } else {
+          connection.send({ type: 'open_inventory' });
+          _inventoryScreen.open([]);
+        }
+      }
+      if (!_inventoryScreen || !_inventoryScreen.isOpen()) {
+        connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb, tf);
+      }
       if (controls.slotChanged) {
         _heldSlot = controls.selectedSlot;
         updateHotbar();
@@ -262,6 +280,10 @@ function onHotbar(slots, heldSlot) {
 function onHeldSlot(slot) {
   _heldSlot = slot;
   updateHotbar();
+}
+
+function onInventory(slots) {
+  if (_inventoryScreen) _inventoryScreen.updateSlots(slots);
 }
 
 function updateHotbar() {

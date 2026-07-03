@@ -135,8 +135,9 @@ function initBot() {
     });
   });
 
-  bot.on('playerCollect', () => broadcastHotbar());
+  bot.on('playerCollect', () => { broadcastHotbar(); broadcastInventory(); });
   bot.on('heldItemChanged', () => broadcastHotbar());
+  bot.inventory.on('updateSlot', () => { broadcastHotbar(); broadcastInventory(); });
 
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning...');
@@ -237,6 +238,16 @@ function broadcastHotbar() {
   broadcastMessage({ type: 'hotbar', slots, heldSlot: bot.quickBarSlot });
 }
 
+function broadcastInventory() {
+  if (!bot || !bot.inventory) return;
+  const slots = [];
+  for (let i = 0; i <= 44; i++) {
+    const item = bot.inventory.slots[i];
+    slots.push(item ? { name: item.name, count: item.count } : null);
+  }
+  broadcastMessage({ type: 'inventory', slots });
+}
+
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const blocks = [];
@@ -290,7 +301,20 @@ wss.on('connection', (ws) => {
     try {
       const message = JSON.parse(data);
 
-      if (message.type === 'held_slot_change' && botReady && bot) {
+      if (message.type === 'use_item' && botReady && bot) {
+        const gm = bot.game && bot.game.gameMode;
+        if (gm === 'survival' || gm === 'creative') {
+          bot.activateItem(false).catch(e => console.warn('use_item failed:', e.message));
+        }
+      } else if (message.type === 'open_inventory' && botReady && bot) {
+        broadcastInventory();
+      } else if (message.type === 'click_slot' && botReady && bot) {
+        const { slot, button } = message;
+        if (typeof slot === 'number' && slot >= 0 && slot <= 44) {
+          bot.clickWindow(slot, button || 0, 0)
+            .catch(e => console.warn('click_slot failed:', e.message));
+        }
+      } else if (message.type === 'held_slot_change' && botReady && bot) {
         const slot = message.slot;
         if (slot >= 0 && slot <= 8) {
           bot.setQuickBarSlot(slot);

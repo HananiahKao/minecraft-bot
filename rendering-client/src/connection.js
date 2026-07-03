@@ -3,7 +3,7 @@
  */
 
 export class BridgeConnection {
-  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot) {
+  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot, onInventory) {
     this.ws = null;
     this.isConnected = false;
     this.onChunk = onChunk;
@@ -13,6 +13,7 @@ export class BridgeConnection {
     this.onError = onError;
     this.onHotbar = onHotbar;
     this.onHeldSlot = onHeldSlot;
+    this.onInventory = onInventory;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
   }
@@ -87,6 +88,9 @@ export class BridgeConnection {
       case 'held_slot':
         if (this.onHeldSlot) this.onHeldSlot(message.slot);
         break;
+      case 'inventory':
+        if (this.onInventory) this.onInventory(message.slots);
+        break;
       case 'error':
         console.error('Bridge error:', message.message);
         if (this.onError) this.onError(new Error(message.message));
@@ -110,6 +114,12 @@ export class BridgeConnection {
       this.send({ type: 'pick_block', block: targetedBlock });
     if (controls.placeBlock && targetedBlock && targetedFace)
       this.send({ type: 'place_block', block: targetedBlock, face: targetedFace });
+    if (controls.placeBlock && !targetedBlock)
+      this.send({ type: 'use_item' });
+  }
+
+  sendClickSlot(slot, button) {
+    this.send({ type: 'click_slot', slot, button });
   }
 
   close() {

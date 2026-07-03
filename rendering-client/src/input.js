@@ -14,11 +14,12 @@ export class InputHandler {
     this.lastMouseMoveTime = 0;
     this._pendingDX = 0;   // accumulated mouse delta since last applyMouseLook()
     this._pendingDY = 0;
-    this._flyToggle = false;     // one-shot: true for one send cycle after double-tap Space
-    this._lastSpaceTap = 0;      // timestamp of last Space keydown leading edge
-    this._breakHeld = false;      // held state: left button held → mine targeted block
-    this._pickPending = false;   // one-shot: middle-click → pick block into hotbar
-    this._placePending = false;  // one-shot: right-click → place held block
+    this._flyToggle = false;        // one-shot: true for one send cycle after double-tap Space
+    this._lastSpaceTap = 0;         // timestamp of last Space keydown leading edge
+    this._breakHeld = false;        // held state: left button held → mine targeted block
+    this._pickPending = false;      // one-shot: middle-click → pick block into hotbar
+    this._placePending = false;     // one-shot: right-click → place held block
+    this._inventoryToggle = false;  // one-shot: E key → open/close inventory
     this.selectedSlot = 0;       // 0–8, mirrored locally for immediate UI feedback
     this._slotChanged = false;   // one-shot: slot selection changed
 
@@ -41,7 +42,8 @@ export class InputHandler {
     if (name === 'breakBlock') { this._breakHeld = active; return; }
     if (name === 'placePending' && active) { this._placePending = true; return; }
     if (name === 'pickPending'  && active) { this._pickPending  = true; return; }
-    if (name === 'flyToggle'    && active) { this._flyToggle    = true; return; }
+    if (name === 'flyToggle'       && active) { this._flyToggle       = true; return; }
+    if (name === 'inventoryToggle' && active) { this._inventoryToggle = true; return; }
   }
 
   // Sets up touch-based camera look for mobile (pointer lock unavailable on iOS).
@@ -154,6 +156,7 @@ export class InputHandler {
         this._slotChanged = true;
       }
       if (e.key.toLowerCase() === 'f' && !e.repeat) this._pickPending = true;
+      if (e.key.toLowerCase() === 'e' && !e.repeat) this._inventoryToggle = true;
     });
 
     document.addEventListener('click', (e) => {
@@ -197,7 +200,9 @@ export class InputHandler {
     this._placePending = false;
     const slotChanged = this._slotChanged;
     this._slotChanged = false;
-    return { ...this.controls, flyToggle, breakBlock, pickBlock, placeBlock, slotChanged, selectedSlot: this.selectedSlot };
+    const inventoryToggle = this._inventoryToggle;
+    this._inventoryToggle = false;
+    return { ...this.controls, flyToggle, breakBlock, pickBlock, placeBlock, slotChanged, selectedSlot: this.selectedSlot, inventoryToggle };
   }
 
   getMCYaw() {
