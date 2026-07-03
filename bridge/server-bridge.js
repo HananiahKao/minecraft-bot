@@ -137,7 +137,10 @@ function initBot() {
 
   bot.on('playerCollect', () => { broadcastHotbar(); broadcastInventory(); });
   bot.on('heldItemChanged', () => broadcastHotbar());
-  bot.inventory.on('updateSlot', () => { broadcastHotbar(); broadcastInventory(); });
+  // inventory plugin is only available after spawn
+  bot.once('spawn', () => {
+    bot.inventory.on('updateSlot', () => { broadcastHotbar(); broadcastInventory(); });
+  });
 
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning...');
