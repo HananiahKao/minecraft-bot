@@ -280,6 +280,13 @@ function broadcastHotbar() {
   broadcastMessage({ type: 'hotbar', slots, heldSlot: bot.quickBarSlot });
 }
 
+function getCursorItem() {
+  if (!bot) return null;
+  const win = bot.currentWindow || bot.inventory;
+  const sel = win && win.selectedItem;
+  return sel ? { name: sel.name, count: sel.count } : null;
+}
+
 function broadcastInventory() {
   if (!bot || !bot.inventory) return;
   const slots = [];
@@ -287,7 +294,7 @@ function broadcastInventory() {
     const item = bot.inventory.slots[i];
     slots.push(item ? { name: item.name, count: item.count } : null);
   }
-  broadcastMessage({ type: 'inventory', slots });
+  broadcastMessage({ type: 'inventory', slots, cursorItem: getCursorItem() });
 }
 
 // Debounced window update — coalesces rapid-fire set_slot packets into one broadcast
@@ -302,6 +309,7 @@ function scheduleWindowUpdate(win) {
       type: 'window_update',
       slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
       playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
+      cursorItem: getCursorItem(),
     });
   }, 80);
 }

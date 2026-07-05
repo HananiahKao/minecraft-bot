@@ -92,7 +92,7 @@ export class BridgeConnection {
         if (this.onHeldSlot) this.onHeldSlot(message.slot);
         break;
       case 'inventory':
-        if (this.onInventory) this.onInventory(message.slots);
+        if (this.onInventory) this.onInventory(message.slots, message.cursorItem);
         break;
       case 'window_update':
         if (this.onWindowUpdate) this.onWindowUpdate(message);

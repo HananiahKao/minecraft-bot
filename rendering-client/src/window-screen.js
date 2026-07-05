@@ -140,10 +140,35 @@ export class WindowScreen {
 
   isOpen() { return this._open; }
 
-  updateSlots(slots, playerSlots) {
+  updateSlots(slots, playerSlots, cursorItem) {
     this._slots = slots || [];
     if (playerSlots) this._playerSlots = playerSlots;
+    if (cursorItem !== undefined) {
+      this._heldItem = cursorItem;
+      this._renderCursor();
+    }
     if (this._open) this._render();
+  }
+
+  _renderCursor() {
+    const c = this._cursor;
+    c.innerHTML = '';
+    const item = this._heldItem;
+    if (item) {
+      const name = document.createElement('div');
+      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+      name.textContent = item.name.replace(/_/g, '\n');
+      c.appendChild(name);
+      if (item.count > 1) {
+        const cnt = document.createElement('div');
+        cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+        cnt.textContent = item.count;
+        c.appendChild(cnt);
+      }
+      c.style.display = 'flex';
+    } else {
+      c.style.display = 'none';
+    }
   }
 
   _clearHeld() {
@@ -291,11 +316,11 @@ export class WindowScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        let next;
-        if (!this._heldItem)                                    next = item;
-        else if (!item || this._heldItem.name === item.name)    next = null;
-        else                                                     next = item;
-        this._pickUp(next, e.clientX, e.clientY);
+        if (!this._heldItem) {
+          this._pickUp(item, e.clientX, e.clientY);
+        } else {
+          this._pickUp(null, e.clientX, e.clientY);
+        }
       } else if (btn === 1 && this._heldItem) {
         const newCount = this._heldItem.count - 1;
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
@@ -348,11 +373,11 @@ export class WindowScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        let next;
-        if (!this._heldItem)                                    next = item;
-        else if (!item || this._heldItem.name === item.name)    next = null;
-        else                                                     next = item;
-        this._pickUp(next, e.clientX, e.clientY);
+        if (!this._heldItem) {
+          this._pickUp(item, e.clientX, e.clientY);
+        } else {
+          this._pickUp(null, e.clientX, e.clientY);
+        }
       } else if (btn === 1 && this._heldItem) {
         const newCount = this._heldItem.count - 1;
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);

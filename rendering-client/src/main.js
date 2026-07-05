@@ -296,8 +296,8 @@ function onHeldSlot(slot) {
   updateHotbar();
 }
 
-function onInventory(slots) {
-  if (_inventoryScreen) _inventoryScreen.updateSlots(slots);
+function onInventory(slots, cursorItem) {
+  if (_inventoryScreen) _inventoryScreen.updateSlots(slots, cursorItem);
 }
 
 function onWindowOpen(msg) {
@@ -311,7 +311,7 @@ function onWindowClose() {
 }
 
 function onWindowUpdate(msg) {
-  if (_windowScreen && _windowScreen.isOpen()) _windowScreen.updateSlots(msg.slots, msg.playerSlots);
+  if (_windowScreen && _windowScreen.isOpen()) _windowScreen.updateSlots(msg.slots, msg.playerSlots, msg.cursorItem);
 }
 
 function updateHotbar() {

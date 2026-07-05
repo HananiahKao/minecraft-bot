@@ -150,9 +150,34 @@ export class InventoryScreen {
 
   isOpen() { return this._open; }
 
-  updateSlots(slots) {
+  updateSlots(slots, cursorItem) {
     this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
+    if (cursorItem !== undefined) {
+      this._heldItem = cursorItem;
+      this._renderCursor();
+    }
     if (this._open) this._render();
+  }
+
+  _renderCursor() {
+    const c = this._cursor;
+    c.innerHTML = '';
+    const item = this._heldItem;
+    if (item) {
+      const name = document.createElement('div');
+      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+      name.textContent = item.name.replace(/_/g, '\n');
+      c.appendChild(name);
+      if (item.count > 1) {
+        const cnt = document.createElement('div');
+        cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+        cnt.textContent = item.count;
+        c.appendChild(cnt);
+      }
+      c.style.display = 'flex';
+    } else {
+      c.style.display = 'none';
+    }
   }
 
   _row(indices) {
@@ -268,17 +293,15 @@ export class InventoryScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        let nextHeld;
+        // Optimistic pick-up only when cursor is empty — server corrects within ~80ms
         if (!this._heldItem) {
-          nextHeld = item; // pick up
-        } else if (!item || this._heldItem.name === item.name) {
-          nextHeld = null; // place or stack → cursor empties
+          this._pickUpItem(item, e.clientX, e.clientY);
         } else {
-          nextHeld = item; // different item → swap, cursor gets slot's item
+          // Cursor occupied — clear optimistically; server will send real cursor state
+          this._pickUpItem(null, e.clientX, e.clientY);
         }
-        this._pickUpItem(nextHeld, e.clientX, e.clientY);
       } else if (btn === 1 && this._heldItem) {
-        // Right click: place one item from cursor — decrement held count
+        // Right click: place one item from cursor — decrement held count optimistically
         const newCount = this._heldItem.count - 1;
         this._pickUpItem(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
       }
