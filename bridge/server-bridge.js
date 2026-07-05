@@ -156,7 +156,12 @@ function initBot() {
   bot.on('heldItemChanged', () => broadcastHotbar());
   // inventory plugin is only available after spawn
   bot.once('spawn', () => {
-    bot.inventory.on('updateSlot', () => { broadcastHotbar(); broadcastInventory(); });
+    bot.inventory.on('updateSlot', () => {
+      broadcastHotbar();
+      broadcastInventory();
+      // If a container window is open, also refresh it — player inv slots are shared
+      if (bot.currentWindow) broadcastWindowUpdate(bot.currentWindow);
+    });
   });
 
   bot.on('windowOpen', (win) => {
@@ -171,6 +176,8 @@ function initBot() {
       inventoryStart: win.inventoryStart,
       id: win.id,
     });
+    // Forward container slot changes (crafting results, items moved in/out, etc.)
+    win.on('updateSlot', () => broadcastWindowUpdate(win));
   });
 
   bot.on('windowClose', () => {
@@ -284,6 +291,16 @@ function broadcastInventory() {
     slots.push(item ? { name: item.name, count: item.count } : null);
   }
   broadcastMessage({ type: 'inventory', slots });
+}
+
+function broadcastWindowUpdate(win) {
+  if (!win) return;
+  const mapItem = item => item ? { name: item.name, count: item.count } : null;
+  broadcastMessage({
+    type: 'window_update',
+    slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
+    playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
+  });
 }
 
 function broadcastChunk(chunkX, chunkZ, chunkData) {
@@ -411,23 +428,7 @@ wss.on('connection', (ws) => {
           console.warn('place_block failed:', e.message);
         }
       } else if (message.type === 'window_click' && botReady && bot) {
-        const win = bot.currentWindow;
         bot.clickWindow(message.slot, message.mouseButton, message.mode || 0)
-          .then(() => {
-            // Broadcast updated slots after server confirms the click
-            if (win) {
-              const mapItem = i => i ? { name: i.name, count: i.count } : null;
-              if (win === bot.inventory) {
-                broadcastInventory();
-              } else {
-                broadcastMessage({
-                  type: 'window_update',
-                  slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
-                  playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
-                });
-              }
-            }
-          })
           .catch(e => console.warn('window_click failed:', e.message));
       } else if (message.type === 'close_window' && botReady && bot && bot.currentWindow) {
         bot.closeWindow(bot.currentWindow);

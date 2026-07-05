@@ -290,7 +290,12 @@ export class WindowScreen {
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
-      if (btn === 0) this._pickUp(this._heldItem ? null : item, e.clientX, e.clientY);
+      if (btn === 0) {
+        this._pickUp(this._heldItem ? null : item, e.clientX, e.clientY);
+      } else if (btn === 1 && this._heldItem) {
+        const newCount = this._heldItem.count - 1;
+        this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
+      }
       if (this._onClickSlot) this._onClickSlot(slotIdx, btn);
     });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
@@ -338,7 +343,12 @@ export class WindowScreen {
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
-      if (btn === 0) this._pickUp(this._heldItem ? null : item, e.clientX, e.clientY);
+      if (btn === 0) {
+        this._pickUp(this._heldItem ? null : item, e.clientX, e.clientY);
+      } else if (btn === 1 && this._heldItem) {
+        const newCount = this._heldItem.count - 1;
+        this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
+      }
       if (this._onClickSlot) this._onClickSlot(idx, btn);
     });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });

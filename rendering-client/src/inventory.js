@@ -264,8 +264,6 @@ export class InventoryScreen {
       this._tooltip.style.display = 'none';
     });
 
-    // Click: optimistically pick up item and show it following the cursor.
-    // The server will confirm with an updateSlots call which clears _heldItem.
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
@@ -273,6 +271,10 @@ export class InventoryScreen {
         // Left click: pick up item from slot (or place held item here)
         const pickedUp = this._heldItem ? null : item;
         this._pickUpItem(pickedUp, e.clientX, e.clientY);
+      } else if (btn === 1 && this._heldItem) {
+        // Right click: place one item from cursor — decrement held count
+        const newCount = this._heldItem.count - 1;
+        this._pickUpItem(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
       }
       if (this._onClickSlot) this._onClickSlot(idx, btn);
     });
