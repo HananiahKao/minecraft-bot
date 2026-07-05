@@ -108,9 +108,13 @@ function init() {
       if (controls.inventoryToggle && _inventoryScreen) {
         if (_inventoryScreen.isOpen()) {
           _inventoryScreen.close();
+          // Re-acquire pointer lock so the game resumes immediately
+          document.body.requestPointerLock();
         } else {
           connection.send({ type: 'open_inventory' });
           _inventoryScreen.open([]);
+          // Release pointer lock so the OS cursor appears over inventory slots
+          if (document.pointerLockElement) document.exitPointerLock();
         }
       }
       if (!_inventoryScreen || !_inventoryScreen.isOpen()) {

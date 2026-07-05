@@ -34,6 +34,8 @@ export class InventoryScreen {
     this._el = null;
     this._body = null;
     this._tooltip = null;
+    this._heldItem = null;   // item currently "on the cursor" between two clicks
+    this._cursor = null;     // floating div that follows the mouse
     this._buildDOM();
   }
 
@@ -70,19 +72,69 @@ export class InventoryScreen {
     document.body.appendChild(tooltip);
     this._tooltip = tooltip;
 
+    // Floating held-item indicator — follows the mouse while an item is "on the cursor"
+    const cursor = document.createElement('div');
+    cursor.style.cssText = `
+      position:fixed;pointer-events:none;z-index:202;display:none;
+      width:${SLOT_SIZE}px;height:${SLOT_SIZE}px;
+      background:#8b8b8b;border:2px solid #555;border-top-color:#fff;border-left-color:#fff;
+      display:none;flex-direction:column;align-items:center;justify-content:center;
+      font-size:9px;color:#fff;text-align:center;box-sizing:border-box;padding:2px;
+      opacity:0.9;
+    `;
+    document.body.appendChild(cursor);
+    this._cursor = cursor;
+
     el.appendChild(panel);
     document.body.appendChild(el);
     this._el = el;
 
-    el.addEventListener('mousedown', (e) => { if (e.target === el) this.close(); });
+    // Move held-item cursor with the mouse
+    el.addEventListener('mousemove', (e) => {
+      if (!this._heldItem) return;
+      this._cursor.style.left = (e.clientX - SLOT_SIZE / 2) + 'px';
+      this._cursor.style.top  = (e.clientY - SLOT_SIZE / 2) + 'px';
+    });
+
+    el.addEventListener('mousedown', (e) => {
+      if (e.target === el) { this._clearHeld(); this.close(); }
+    });
     document.addEventListener('keydown', (e) => {
       if (!this._open) return;
-      if (e.key === 'Escape' || e.key.toLowerCase() === 'e') { e.preventDefault(); this.close(); }
+      if (e.key === 'Escape' || e.key.toLowerCase() === 'e') { e.preventDefault(); this._clearHeld(); this.close(); }
     });
+  }
+
+  _clearHeld() {
+    this._heldItem = null;
+    this._cursor.style.display = 'none';
+    this._cursor.innerHTML = '';
+  }
+
+  _pickUpItem(item, mouseX, mouseY) {
+    this._heldItem = item;
+    const c = this._cursor;
+    c.innerHTML = '';
+    if (item) {
+      const name = document.createElement('div');
+      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+      name.textContent = item.name.replace(/_/g, '\n');
+      c.appendChild(name);
+      if (item.count > 1) {
+        const cnt = document.createElement('div');
+        cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+        cnt.textContent = item.count;
+        c.appendChild(cnt);
+      }
+    }
+    c.style.display = item ? 'flex' : 'none';
+    c.style.left = (mouseX - SLOT_SIZE / 2) + 'px';
+    c.style.top  = (mouseY - SLOT_SIZE / 2) + 'px';
   }
 
   open(slots) {
     this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
+    this._clearHeld();
     this._render();
     this._el.style.display = 'flex';
     this._open = true;
@@ -91,6 +143,7 @@ export class InventoryScreen {
   close() {
     this._el.style.display = 'none';
     this._tooltip.style.display = 'none';
+    this._clearHeld();
     this._open = false;
     if (this._onClose) this._onClose();
   }
@@ -99,6 +152,8 @@ export class InventoryScreen {
 
   updateSlots(slots) {
     this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
+    // Server confirmed the move — clear held item, re-render with new state
+    this._clearHeld();
     if (this._open) this._render();
   }
 
@@ -211,16 +266,26 @@ export class InventoryScreen {
       this._tooltip.style.display = 'none';
     });
 
-    // Left click (pick up / place)
+    // Click: optimistically pick up item and show it following the cursor.
+    // The server will confirm with an updateSlots call which clears _heldItem.
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (this._onClickSlot) this._onClickSlot(idx, e.button === 2 ? 1 : 0);
+      const btn = e.button === 2 ? 1 : 0;
+      if (btn === 0) {
+        // Left click: pick up item from slot (or place held item here)
+        const pickedUp = this._heldItem ? null : item;
+        this._pickUpItem(pickedUp, e.clientX, e.clientY);
+      }
+      if (this._onClickSlot) this._onClickSlot(idx, btn);
     });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
 
     // Touch support: tap = left click
     cell.addEventListener('touchend', (e) => {
       e.preventDefault(); e.stopPropagation();
+      const pickedUp = this._heldItem ? null : item;
+      const touch = e.changedTouches[0];
+      this._pickUpItem(pickedUp, touch ? touch.clientX : 0, touch ? touch.clientY : 0);
       if (this._onClickSlot) this._onClickSlot(idx, 0);
     });
 
