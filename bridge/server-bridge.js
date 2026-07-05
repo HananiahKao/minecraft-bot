@@ -14,6 +14,23 @@ import Vec3 from 'vec3';
 const { Chunk } = pkg;
 
 const BRIDGE_PORT = 8080;
+
+// Blocks that open a GUI when right-clicked — activateBlock() instead of block_place
+const INTERACTIVE_BLOCKS = new Set([
+  'crafting_table',
+  'chest', 'trapped_chest', 'ender_chest', 'barrel',
+  'furnace', 'blast_furnace', 'smoker',
+  'anvil', 'chipped_anvil', 'damaged_anvil',
+  'enchanting_table', 'brewing_stand', 'beacon',
+  'hopper', 'dispenser', 'dropper',
+  'cartography_table', 'grindstone', 'lectern',
+  'loom', 'stonecutter', 'smithing_table',
+  'shulker_box', 'white_shulker_box', 'orange_shulker_box', 'magenta_shulker_box',
+  'light_blue_shulker_box', 'yellow_shulker_box', 'lime_shulker_box', 'pink_shulker_box',
+  'gray_shulker_box', 'light_gray_shulker_box', 'cyan_shulker_box', 'purple_shulker_box',
+  'blue_shulker_box', 'brown_shulker_box', 'green_shulker_box', 'red_shulker_box',
+  'black_shulker_box',
+]);
 const MINECRAFT_HOST = process.env.MC_HOST || 'localhost';
 const MINECRAFT_PORT = parseInt(process.env.MC_PORT || '25565');
 const BOT_USERNAME = process.env.BOT_USER || 'RenderBot';
@@ -140,6 +157,22 @@ function initBot() {
   // inventory plugin is only available after spawn
   bot.once('spawn', () => {
     bot.inventory.on('updateSlot', () => { broadcastHotbar(); broadcastInventory(); });
+  });
+
+  bot.on('windowOpen', (win) => {
+    const containerSlots = win.slots.slice(0, win.inventoryStart);
+    broadcastMessage({
+      type: 'window_open',
+      windowType: win.type,
+      title: win.title || String(win.type),
+      slots: containerSlots.map(item => item ? { name: item.name, count: item.count } : null),
+      inventoryStart: win.inventoryStart,
+      id: win.id,
+    });
+  });
+
+  bot.on('windowClose', () => {
+    broadcastMessage({ type: 'window_close' });
   });
 
   bot.on('death', () => {
@@ -344,13 +377,17 @@ wss.on('connection', (ws) => {
       } else if (message.type === 'place_block' && botReady && bot) {
         const gm = bot.game && bot.game.gameMode;
         if (gm !== 'survival' && gm !== 'creative') return;
+        const { x, y, z } = message.block;
+        const targetBlock = bot.blockAt(new Vec3(x, y, z));
+        // Interactive blocks open a GUI — activate them instead of placing on them
+        if (targetBlock && INTERACTIVE_BLOCKS.has(targetBlock.name)) {
+          bot.activateBlock(targetBlock).catch(e => console.warn('activateBlock failed:', e.message));
+          return;
+        }
         const now = Date.now();
         if (now - _placeLastMs < 250) return; // 250ms cooldown between placements
         _placeLastMs = now;
-        const { x, y, z } = message.block;
         const face = message.face || { x: 0, y: 1, z: 0 };
-        // Map face normal to Minecraft direction index
-        // 0=bottom(-Y), 1=top(+Y), 2=north(-Z), 3=south(+Z), 4=west(-X), 5=east(+X)
         let dir = 1;
         if (face.y < 0) dir = 0;
         else if (face.y > 0) dir = 1;
@@ -371,6 +408,11 @@ wss.on('connection', (ws) => {
         } catch (e) {
           console.warn('place_block failed:', e.message);
         }
+      } else if (message.type === 'window_click' && botReady && bot && bot.currentWindow) {
+        bot.clickWindow(message.slot, message.mouseButton, message.mode || 0)
+          .catch(e => console.warn('window_click failed:', e.message));
+      } else if (message.type === 'close_window' && botReady && bot && bot.currentWindow) {
+        bot.closeWindow(bot.currentWindow);
       } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages
         // are not blocked behind a bulk chunk send (4 chunks per setImmediate tick).

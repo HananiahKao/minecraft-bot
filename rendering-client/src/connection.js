@@ -3,7 +3,7 @@
  */
 
 export class BridgeConnection {
-  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot, onInventory) {
+  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot, onInventory, onWindowOpen, onWindowClose) {
     this.ws = null;
     this.isConnected = false;
     this.onChunk = onChunk;
@@ -14,6 +14,8 @@ export class BridgeConnection {
     this.onHotbar = onHotbar;
     this.onHeldSlot = onHeldSlot;
     this.onInventory = onInventory;
+    this.onWindowOpen = onWindowOpen;
+    this.onWindowClose = onWindowClose;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
   }

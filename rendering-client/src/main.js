@@ -9,6 +9,7 @@ import { InputHandler } from './input.js';
 import { BridgeConnection } from './connection.js';
 import { setupMobileControls } from './mobile.js';
 import { InventoryScreen } from './inventory.js';
+import { WindowScreen } from './window-screen.js';
 
 let renderer = null;
 let inputHandler = null;
@@ -17,6 +18,7 @@ let worker = null;
 let _hotbarSlots = Array(9).fill(null); // { name, count } or null
 let _heldSlot = 0;
 let _inventoryScreen = null;
+let _windowScreen = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
 let lastBotChunkX = null;
@@ -66,6 +68,11 @@ function init() {
     onClickSlot: (slot, button) => connection && connection.sendClickSlot(slot, button),
   });
 
+  _windowScreen = new WindowScreen({
+    onClose: () => { connection && connection.send({ type: 'close_window' }); },
+    onClickSlot: (slot, button) => connection && connection.send({ type: 'window_click', slot, mouseButton: button, mode: 0 }),
+  });
+
   connection = new BridgeConnection(
     onChunkReceived,
     onBotReady,
@@ -73,7 +80,9 @@ function init() {
     onError,
     onHotbar,
     onHeldSlot,
-    onInventory
+    onInventory,
+    onWindowOpen,
+    onWindowClose,
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
@@ -290,6 +299,16 @@ function onInventory(slots) {
   if (_inventoryScreen) _inventoryScreen.updateSlots(slots);
 }
 
+function onWindowOpen(msg) {
+  if (!_windowScreen) return;
+  _windowScreen.open(msg.windowType, msg.title, msg.slots);
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function onWindowClose() {
+  if (_windowScreen && _windowScreen.isOpen()) _windowScreen.close();
+}
+
 function updateHotbar() {
   const el = document.getElementById('hotbar');
   if (!el) return;
@@ -415,6 +434,8 @@ function startUpdateLoop() {
         else if (msg.type === 'hotbar')           { onHotbar(msg.slots, msg.heldSlot); }
         else if (msg.type === 'held_slot')        { onHeldSlot(msg.slot); }
         else if (msg.type === 'inventory')        { onInventory(msg.slots); }
+        else if (msg.type === 'window_open')      { onWindowOpen(msg); }
+        else if (msg.type === 'window_close')     { onWindowClose(); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
       } catch (e) {}

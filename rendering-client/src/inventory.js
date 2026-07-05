@@ -101,7 +101,7 @@ export class InventoryScreen {
     });
     document.addEventListener('keydown', (e) => {
       if (!this._open) return;
-      if (e.key === 'Escape' || e.key.toLowerCase() === 'e') { e.preventDefault(); this._clearHeld(); this.close(); }
+      if (!e.repeat && (e.key === 'Escape' || e.key.toLowerCase() === 'e')) { e.preventDefault(); this._clearHeld(); this.close(); }
     });
   }
 
