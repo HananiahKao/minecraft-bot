@@ -442,10 +442,18 @@ wss.on('connection', (ws) => {
           console.warn('place_block failed:', e.message);
         }
       } else if (message.type === 'window_click' && botReady && bot) {
+        // bot.currentWindow is null when no container is open (player inventory only).
+        // bot.clickWindow() throws "No window open" in that case, so use bot.inventory.
+        if (!bot.currentWindow) bot.currentWindow = bot.inventory;
         bot.clickWindow(message.slot, message.mouseButton, message.mode || 0)
           .catch(e => console.warn('window_click failed:', e.message));
-      } else if (message.type === 'close_window' && botReady && bot && bot.currentWindow) {
-        bot.closeWindow(bot.currentWindow);
+      } else if (message.type === 'close_window' && botReady && bot) {
+        if (bot.currentWindow && bot.currentWindow !== bot.inventory) {
+          bot.closeWindow(bot.currentWindow);
+        } else {
+          // Closing player inventory — just reset so next click can set it again
+          bot.currentWindow = null;
+        }
       } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages
         // are not blocked behind a bulk chunk send (4 chunks per setImmediate tick).
