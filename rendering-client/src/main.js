@@ -65,7 +65,7 @@ function init() {
 
   _inventoryScreen = new InventoryScreen({
     onClose: () => { /* pointer lock re-acquired on next canvas click */ },
-    onClickSlot: (slot, button) => connection && connection.sendClickSlot(slot, button),
+    onClickSlot: (slot, button) => connection && connection.send({ type: 'window_click', slot, mouseButton: button, mode: 0 }),
   });
 
   _windowScreen = new WindowScreen({
@@ -83,6 +83,7 @@ function init() {
     onInventory,
     onWindowOpen,
     onWindowClose,
+    onWindowUpdate,
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
@@ -309,6 +310,10 @@ function onWindowClose() {
   if (_windowScreen && _windowScreen.isOpen()) _windowScreen.close();
 }
 
+function onWindowUpdate(msg) {
+  if (_windowScreen && _windowScreen.isOpen()) _windowScreen.updateSlots(msg.slots, msg.playerSlots);
+}
+
 function updateHotbar() {
   const el = document.getElementById('hotbar');
   if (!el) return;
@@ -436,6 +441,7 @@ function startUpdateLoop() {
         else if (msg.type === 'inventory')        { onInventory(msg.slots); }
         else if (msg.type === 'window_open')      { onWindowOpen(msg); }
         else if (msg.type === 'window_close')     { onWindowClose(); }
+        else if (msg.type === 'window_update')    { onWindowUpdate(msg); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
       } catch (e) {}

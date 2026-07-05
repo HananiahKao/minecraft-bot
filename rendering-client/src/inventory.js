@@ -152,8 +152,6 @@ export class InventoryScreen {
 
   updateSlots(slots) {
     this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
-    // Server confirmed the move — clear held item, re-render with new state
-    this._clearHeld();
     if (this._open) this._render();
   }
 

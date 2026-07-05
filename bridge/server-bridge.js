@@ -171,6 +171,14 @@ function initBot() {
       inventoryStart: win.inventoryStart,
       id: win.id,
     });
+    // Forward slot updates while this window is open (crafting results, chest changes, etc.)
+    win.on('updateSlot', () => {
+      broadcastMessage({
+        type: 'window_update',
+        slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
+        playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
+      });
+    });
   });
 
   bot.on('windowClose', () => {
@@ -410,7 +418,7 @@ wss.on('connection', (ws) => {
         } catch (e) {
           console.warn('place_block failed:', e.message);
         }
-      } else if (message.type === 'window_click' && botReady && bot && bot.currentWindow) {
+      } else if (message.type === 'window_click' && botReady && bot) {
         bot.clickWindow(message.slot, message.mouseButton, message.mode || 0)
           .catch(e => console.warn('window_click failed:', e.message));
       } else if (message.type === 'close_window' && botReady && bot && bot.currentWindow) {

@@ -140,9 +140,9 @@ export class WindowScreen {
 
   isOpen() { return this._open; }
 
-  updateSlots(slots) {
+  updateSlots(slots, playerSlots) {
     this._slots = slots || [];
-    this._clearHeld();
+    if (playerSlots) this._playerSlots = playerSlots;
     if (this._open) this._render();
   }
 
