@@ -160,12 +160,14 @@ function initBot() {
   });
 
   bot.on('windowOpen', (win) => {
-    const containerSlots = win.slots.slice(0, win.inventoryStart);
+    const mapItem = item => item ? { name: item.name, count: item.count } : null;
     broadcastMessage({
       type: 'window_open',
       windowType: win.type,
       title: win.title || String(win.type),
-      slots: containerSlots.map(item => item ? { name: item.name, count: item.count } : null),
+      slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
+      // Player main inventory (27 slots) and hotbar (9 slots) shown below container
+      playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
       inventoryStart: win.inventoryStart,
       id: win.id,
     });

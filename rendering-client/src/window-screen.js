@@ -51,6 +51,8 @@ export class WindowScreen {
   constructor({ onClose, onClickSlot }) {
     this._slots = [];
     this._windowType = null;
+    this._playerSlots = [];   // player main inv + hotbar shown below container
+    this._inventoryStart = 0; // offset so window_click slot indices are correct
     this._onClose = onClose;
     this._onClickSlot = onClickSlot;
     this._open = false;
@@ -116,9 +118,11 @@ export class WindowScreen {
     });
   }
 
-  open(windowType, title, slots) {
+  open(windowType, title, slots, playerSlots, inventoryStart) {
     this._windowType = windowType;
     this._slots = slots || [];
+    this._playerSlots = playerSlots || [];
+    this._inventoryStart = inventoryStart || 0;
     this._title.textContent = parseTitle(title);
     this._clearHeld();
     this._render();
@@ -223,6 +227,80 @@ export class WindowScreen {
       const cols = columnsFor(n);
       b.appendChild(this._grid(Array.from({length: n}, (_, i) => i), cols));
     }
+
+    // Player inventory below container (27 main + 9 hotbar), matching Minecraft UI
+    if (this._playerSlots.length > 0) {
+      const sep = document.createElement('div');
+      sep.style.cssText = `height:2px;border-top:2px solid #999;margin:10px 0 4px;`;
+      b.appendChild(sep);
+      const lbl = document.createElement('div');
+      lbl.textContent = 'Inventory';
+      lbl.style.cssText = `font-size:11px;color:#444;margin-bottom:4px;`;
+      b.appendChild(lbl);
+      // Main inventory (first 27 of playerSlots)
+      b.appendChild(this._playerGrid(0, 27, 9));
+      // Gap + hotbar
+      const sep2 = document.createElement('div');
+      sep2.style.cssText = `height:4px;`;
+      b.appendChild(sep2);
+      b.appendChild(this._playerGrid(27, 9, 9));
+    }
+  }
+
+  // Render a slice of _playerSlots as a grid; slot indices are offset by inventoryStart
+  _playerGrid(start, count, cols) {
+    const g = document.createElement('div');
+    g.style.cssText = `display:grid;grid-template-columns:repeat(${cols},${SLOT_SIZE}px);gap:${GAP}px;margin-bottom:${GAP}px;`;
+    for (let i = start; i < start + count && i < this._playerSlots.length; i++) {
+      g.appendChild(this._makePlayerSlot(i));
+    }
+    return g;
+  }
+
+  _makePlayerSlot(playerIdx) {
+    const slotIdx = this._inventoryStart + playerIdx; // actual window slot index for clicks
+    const item = this._playerSlots[playerIdx] || null;
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      width:${SLOT_SIZE}px;height:${SLOT_SIZE}px;
+      background:#8b8b8b;border:2px solid #555;border-top-color:#fff;border-left-color:#fff;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      cursor:pointer;position:relative;box-sizing:border-box;
+      font-size:9px;color:#fff;text-align:center;overflow:hidden;padding:2px;
+      -webkit-tap-highlight-color:transparent;
+    `;
+    if (item) {
+      const name = document.createElement('div');
+      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+      name.textContent = item.name.replace(/_/g, '\n');
+      cell.appendChild(name);
+      if (item.count > 1) {
+        const cnt = document.createElement('div');
+        cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
+        cnt.textContent = item.count;
+        cell.appendChild(cnt);
+      }
+    }
+    cell.addEventListener('mouseenter', () => {
+      cell.style.background = '#a0a0a0';
+      if (item) { this._tooltip.textContent = item.name.replace(/_/g,' ') + (item.count > 1 ? ` ×${item.count}` : ''); this._tooltip.style.display = 'block'; }
+    });
+    cell.addEventListener('mousemove', (e) => { this._tooltip.style.left = (e.clientX+14)+'px'; this._tooltip.style.top = (e.clientY-6)+'px'; });
+    cell.addEventListener('mouseleave', () => { cell.style.background = '#8b8b8b'; this._tooltip.style.display = 'none'; });
+    cell.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const btn = e.button === 2 ? 1 : 0;
+      if (btn === 0) this._pickUp(this._heldItem ? null : item, e.clientX, e.clientY);
+      if (this._onClickSlot) this._onClickSlot(slotIdx, btn);
+    });
+    cell.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+    cell.addEventListener('touchend', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const t = e.changedTouches[0];
+      this._pickUp(this._heldItem ? null : item, t ? t.clientX : 0, t ? t.clientY : 0);
+      if (this._onClickSlot) this._onClickSlot(slotIdx, 0);
+    });
+    return cell;
   }
 
   _makeSlot(idx) {

@@ -301,7 +301,7 @@ function onInventory(slots) {
 
 function onWindowOpen(msg) {
   if (!_windowScreen) return;
-  _windowScreen.open(msg.windowType, msg.title, msg.slots);
+  _windowScreen.open(msg.windowType, msg.title, msg.slots, msg.playerSlots, msg.inventoryStart);
   if (document.pointerLockElement) document.exitPointerLock();
 }
 
