@@ -268,9 +268,15 @@ export class InventoryScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        // Left click: pick up item from slot (or place held item here)
-        const pickedUp = this._heldItem ? null : item;
-        this._pickUpItem(pickedUp, e.clientX, e.clientY);
+        let nextHeld;
+        if (!this._heldItem) {
+          nextHeld = item; // pick up
+        } else if (!item || this._heldItem.name === item.name) {
+          nextHeld = null; // place or stack → cursor empties
+        } else {
+          nextHeld = item; // different item → swap, cursor gets slot's item
+        }
+        this._pickUpItem(nextHeld, e.clientX, e.clientY);
       } else if (btn === 1 && this._heldItem) {
         // Right click: place one item from cursor — decrement held count
         const newCount = this._heldItem.count - 1;

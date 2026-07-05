@@ -156,12 +156,9 @@ function initBot() {
   bot.on('heldItemChanged', () => broadcastHotbar());
   // inventory plugin is only available after spawn
   bot.once('spawn', () => {
-    bot.inventory.on('updateSlot', () => {
-      broadcastHotbar();
-      broadcastInventory();
-      // If a container window is open, also refresh it — player inv slots are shared
-      if (bot.currentWindow) broadcastWindowUpdate(bot.currentWindow);
-    });
+    // Only schedule inventory broadcast here — window updates come from win.on('updateSlot')
+    // to avoid sending stale win.slots data (inventory fires before win.slots is updated)
+    bot.inventory.on('updateSlot', scheduleInventoryUpdate);
   });
 
   bot.on('windowOpen', (win) => {
@@ -176,8 +173,8 @@ function initBot() {
       inventoryStart: win.inventoryStart,
       id: win.id,
     });
-    // Forward container slot changes (crafting results, items moved in/out, etc.)
-    win.on('updateSlot', () => broadcastWindowUpdate(win));
+    // Forward container slot changes — debounced so all set_slot packets in a batch settle first
+    win.on('updateSlot', () => scheduleWindowUpdate(win));
   });
 
   bot.on('windowClose', () => {
@@ -293,14 +290,31 @@ function broadcastInventory() {
   broadcastMessage({ type: 'inventory', slots });
 }
 
-function broadcastWindowUpdate(win) {
-  if (!win) return;
-  const mapItem = item => item ? { name: item.name, count: item.count } : null;
-  broadcastMessage({
-    type: 'window_update',
-    slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
-    playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
-  });
+// Debounced window update — coalesces rapid-fire set_slot packets into one broadcast
+let _windowUpdateTimer = null;
+function scheduleWindowUpdate(win) {
+  if (_windowUpdateTimer) clearTimeout(_windowUpdateTimer);
+  _windowUpdateTimer = setTimeout(() => {
+    _windowUpdateTimer = null;
+    if (!win) return;
+    const mapItem = item => item ? { name: item.name, count: item.count } : null;
+    broadcastMessage({
+      type: 'window_update',
+      slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
+      playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
+    });
+  }, 80);
+}
+
+// Debounced inventory update — same reason
+let _inventoryUpdateTimer = null;
+function scheduleInventoryUpdate() {
+  if (_inventoryUpdateTimer) clearTimeout(_inventoryUpdateTimer);
+  _inventoryUpdateTimer = setTimeout(() => {
+    _inventoryUpdateTimer = null;
+    broadcastHotbar();
+    broadcastInventory();
+  }, 80);
 }
 
 function broadcastChunk(chunkX, chunkZ, chunkData) {
