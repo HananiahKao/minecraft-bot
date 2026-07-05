@@ -121,14 +121,14 @@ export class InputHandler {
     });
 
     document.addEventListener('mousedown', (e) => {
-      if (e.target.closest('#metrics')) return;
+      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay')) return;
       if (!this.isPointerLocked) {
         document.body.requestPointerLock();
         return;
       }
       if (e.button === 0) this._breakHeld = true;
       if (e.button === 1) { e.preventDefault(); this._pickPending = true; }
-      if (e.button === 2) { console.log('[input] right-click → placePending'); this._placePending = true; }
+      if (e.button === 2) { this._placePending = true; }
     });
 
     document.addEventListener('mouseup', (e) => {
@@ -160,7 +160,7 @@ export class InputHandler {
     });
 
     document.addEventListener('click', (e) => {
-      if (e.target.closest('#metrics')) return;
+      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay')) return;
       if (!this.isPointerLocked) document.body.requestPointerLock();
     });
 

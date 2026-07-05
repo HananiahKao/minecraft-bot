@@ -9,44 +9,42 @@
 const SLOT_SIZE = 52;
 const GAP = 4;
 
-// How many columns to use when auto-laying-out an unknown window type
-function columnsFor(slotCount) {
-  if (slotCount <= 5)  return slotCount;
-  if (slotCount <= 9)  return 9;
-  if (slotCount % 9 === 0) return 9;
-  return Math.ceil(Math.sqrt(slotCount));
+// Parse Mineflayer window title — may be a JSON chat component like {"translate":"container.crafting"}
+const TITLE_MAP = {
+  'container.crafting': 'Crafting Table',
+  'container.chest': 'Chest',
+  'container.chestDouble': 'Large Chest',
+  'container.shulkerBox': 'Shulker Box',
+  'container.furnace': 'Furnace',
+  'container.blast_furnace': 'Blast Furnace',
+  'container.smoker': 'Smoker',
+  'container.enchant': 'Enchanting Table',
+  'container.anvil': 'Anvil',
+  'container.grindstone_title': 'Grindstone',
+  'container.cartography_table': 'Cartography Table',
+  'container.loom': 'Loom',
+  'container.stonecutter': 'Stonecutter',
+  'container.smithing': 'Smithing Table',
+  'container.beacon': 'Beacon',
+  'container.hopper': 'Hopper',
+  'container.dispenser': 'Dispenser',
+  'container.dropper': 'Dropper',
+  'container.barrel': 'Barrel',
+  'container.brewing': 'Brewing Stand',
+};
+function parseTitle(raw) {
+  try {
+    const obj = JSON.parse(raw);
+    const key = obj.translate || obj.text || '';
+    return TITLE_MAP[key] || key.split('.').pop().replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+  } catch { return raw || 'Container'; }
 }
 
-// Window-type-specific layouts: returns { sections: [{ label, slots[] }] }
-// slots[] entries are container slot indices to render in that section.
-function layoutFor(windowType, slotCount) {
-  const t = String(windowType);
-
-  if (t.includes('crafting')) {
-    // Slot 0 = output, 1-9 = 3×3 grid
-    return {
-      sections: [
-        { label: 'Crafting',  slots: [1,2,3,4,5,6,7,8,9], cols: 3 },
-        { label: 'Output',    slots: [0],                   cols: 1 },
-      ],
-    };
-  }
-  if (t.includes('furnace') || t.includes('smoker') || t.includes('blast')) {
-    // 0 = ingredient, 1 = fuel, 2 = output
-    return {
-      sections: [
-        { label: 'Input',  slots: [0], cols: 1 },
-        { label: 'Fuel',   slots: [1], cols: 1 },
-        { label: 'Output', slots: [2], cols: 1 },
-      ],
-    };
-  }
-  if (t.includes('hopper')) {
-    return { sections: [{ label: null, slots: [0,1,2,3,4], cols: 5 }] };
-  }
-  // Generic: lay out all slots in rows
-  const cols = columnsFor(slotCount);
-  return { sections: [{ label: null, slots: Array.from({ length: slotCount }, (_, i) => i), cols }] };
+// How many columns to use when auto-laying-out an unknown window type
+function columnsFor(n) {
+  if (n <= 5) return n;
+  if (n % 9 === 0 || n > 9) return 9;
+  return Math.ceil(Math.sqrt(n));
 }
 
 export class WindowScreen {
@@ -121,7 +119,7 @@ export class WindowScreen {
   open(windowType, title, slots) {
     this._windowType = windowType;
     this._slots = slots || [];
-    this._title.textContent = title || 'Container';
+    this._title.textContent = parseTitle(title);
     this._clearHeld();
     this._render();
     this._el.style.display = 'flex';
@@ -171,22 +169,59 @@ export class WindowScreen {
     c.style.top  = (my - SLOT_SIZE / 2) + 'px';
   }
 
+  _grid(indices, cols) {
+    const g = document.createElement('div');
+    g.style.cssText = `display:grid;grid-template-columns:repeat(${cols},${SLOT_SIZE}px);gap:${GAP}px;`;
+    for (const idx of indices) g.appendChild(this._makeSlot(idx));
+    return g;
+  }
+
+  _arrow() {
+    const a = document.createElement('div');
+    a.textContent = '➜';
+    a.style.cssText = `font-size:28px;color:#555;padding:0 8px;align-self:center;`;
+    return a;
+  }
+
   _render() {
     const b = this._body;
     b.innerHTML = '';
-    const layout = layoutFor(this._windowType, this._slots.length);
+    const t = String(this._windowType);
+    const n = this._slots.length;
 
-    for (const section of layout.sections) {
-      if (section.label) {
-        const lbl = document.createElement('div');
-        lbl.textContent = section.label;
-        lbl.style.cssText = `font-size:11px;color:#444;margin:6px 0 2px;`;
-        b.appendChild(lbl);
-      }
-      const grid = document.createElement('div');
-      grid.style.cssText = `display:grid;grid-template-columns:repeat(${section.cols},${SLOT_SIZE}px);gap:${GAP}px;margin-bottom:${GAP * 2}px;`;
-      for (const idx of section.slots) grid.appendChild(this._makeSlot(idx));
-      b.appendChild(grid);
+    if (t.includes('crafting')) {
+      // 3×3 grid (slots 1–9) → arrow → output (slot 0)
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:4px;`;
+      row.appendChild(this._grid([1,2,3,4,5,6,7,8,9], 3));
+      row.appendChild(this._arrow());
+      row.appendChild(this._grid([0], 1));
+      b.appendChild(row);
+
+    } else if (t.includes('furnace') || t.includes('smoker') || t.includes('blast')) {
+      // Input (slot 0) + fuel (slot 1) → arrow → output (slot 2)
+      const left = document.createElement('div');
+      left.style.cssText = `display:flex;flex-direction:column;gap:${GAP}px;`;
+      left.appendChild(this._grid([0], 1));
+      const fuelLbl = document.createElement('div');
+      fuelLbl.textContent = '🔥';
+      fuelLbl.style.cssText = `text-align:center;font-size:14px;`;
+      left.appendChild(fuelLbl);
+      left.appendChild(this._grid([1], 1));
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:4px;`;
+      row.appendChild(left);
+      row.appendChild(this._arrow());
+      row.appendChild(this._grid([2], 1));
+      b.appendChild(row);
+
+    } else if (t.includes('hopper')) {
+      b.appendChild(this._grid([0,1,2,3,4], 5));
+
+    } else {
+      // Generic grid — 9-wide if divisible, otherwise auto-columns
+      const cols = columnsFor(n);
+      b.appendChild(this._grid(Array.from({length: n}, (_, i) => i), cols));
     }
   }
 
