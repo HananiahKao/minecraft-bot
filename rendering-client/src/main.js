@@ -384,44 +384,36 @@ function startUpdateLoop() {
     }
     requestAnimationFrame(loop);
 
-    // Drain raw message queue — position/ready dispatched immediately, chunks rate-limited
+    // Drain raw message queue — chunk_data enqueued for rate-limited worker dispatch,
+    // all other messages dispatched immediately regardless of payload size.
     const _t_parse = performance.now();
     let i = 0;
     while (i < rawChunkQueue.length) {
       const raw = rawChunkQueue[i];
-      if (raw.length > 500) {
-        try {
-          const msg = JSON.parse(raw);
+      rawChunkQueue.splice(i, 1);
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === 'chunk_data') {
           const ckey = `${msg.x},${msg.z}`;
-          // Store block data and pre-build edge slices (O(n) once, reused as O(1) each call)
           const blockMap = new Map();
           for (const b of msg.blocks) blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
           _chunkBlockData.set(ckey, blockMap);
           _chunkEdgeCache.set(ckey, computeEdgeSlices(blockMap));
-          // Enqueue this chunk (dedup: skip if already queued)
           if (!_chunkQueueKeys.has(ckey)) {
             _chunkQueueKeys.add(ckey);
             chunkQueue.push({ x: msg.x, z: msg.z, blocks: msg.blocks });
           }
-          // Schedule neighbor seam-fix rebuilds lazily — processed when chunkQueue drains
           for (const [nx, nz] of [[msg.x-1,msg.z],[msg.x+1,msg.z],[msg.x,msg.z-1],[msg.x,msg.z+1]]) {
             if (_chunkBlockData.has(`${nx},${nz}`)) _neighborRebuildQueue.add(`${nx},${nz}`);
           }
-        } catch (e) {}
-        rawChunkQueue.splice(i, 1);
-      } else {
-        // Small message (position, ready, error, block_update) — parse and dispatch now
-        try {
-          const msg = JSON.parse(raw);
-          if (msg.type === 'bot_position') onBotPosition(msg.position);
-          else if (msg.type === 'bot_ready') onBotReady(msg.position, msg.gameMode);
-          else if (msg.type === 'hotbar') onHotbar(msg.slots, msg.heldSlot);
-          else if (msg.type === 'held_slot') onHeldSlot(msg.slot);
-          else if (msg.type === 'error') onError(new Error(msg.message));
-          else if (msg.type === 'block_update') onBlockUpdate(msg);
-        } catch (e) {}
-        rawChunkQueue.splice(i, 1);
-      }
+        } else if (msg.type === 'bot_position')  { onBotPosition(msg.position); }
+        else if (msg.type === 'bot_ready')        { onBotReady(msg.position, msg.gameMode); }
+        else if (msg.type === 'hotbar')           { onHotbar(msg.slots, msg.heldSlot); }
+        else if (msg.type === 'held_slot')        { onHeldSlot(msg.slot); }
+        else if (msg.type === 'inventory')        { onInventory(msg.slots); }
+        else if (msg.type === 'error')            { onError(new Error(msg.message)); }
+        else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
+      } catch (e) {}
     }
     const _dt_parse = performance.now() - _t_parse;
 

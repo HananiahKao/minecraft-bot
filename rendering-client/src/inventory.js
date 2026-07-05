@@ -1,19 +1,16 @@
 /**
- * Inventory screen — renders the player's 36 slots (main + hotbar) as an overlay.
- * Slot indices match bot.inventory.slots[] (9–35 = main, 36–44 = hotbar).
+ * Inventory screen — renders the full player inventory:
+ *   Slots 0     : crafting output
+ *   Slots 1–4   : crafting input (2×2 grid)
+ *   Slots 5–8   : armor (head→feet)
+ *   Slots 9–35  : main inventory (3 rows × 9)
+ *   Slots 36–44 : hotbar
+ * Slot indices match bot.inventory.slots[].
  * Click events are forwarded to the bridge via onClickSlot(slotIndex, mouseButton).
  */
 
 const SLOT_SIZE = 52;
 const GAP = 4;
-
-// Minecraft inventory layout: 3 rows of 9 (main) + 1 row of 9 (hotbar)
-const ROWS = [
-  { label: null, slots: range(9, 18) },
-  { label: null, slots: range(18, 27) },
-  { label: null, slots: range(27, 36) },
-  { label: 'hotbar', slots: range(36, 45) },
-];
 
 function range(start, end) {
   const r = [];
@@ -21,14 +18,21 @@ function range(start, end) {
   return r;
 }
 
+// Main inventory rows (used in _render)
+const MAIN_ROWS = [
+  range(9, 18),
+  range(18, 27),
+  range(27, 36),
+];
+
 export class InventoryScreen {
   constructor({ onClose, onClickSlot }) {
-    this._slots = new Array(45).fill(null);
+    this._slots = new Array(46).fill(null);
     this._onClose = onClose;
     this._onClickSlot = onClickSlot;
     this._open = false;
     this._el = null;
-    this._grid = null;
+    this._body = null;
     this._tooltip = null;
     this._buildDOM();
   }
@@ -38,14 +42,14 @@ export class InventoryScreen {
     el.id = 'inventory-screen';
     el.style.cssText = `
       position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-      background:rgba(0,0,0,0.65);z-index:200;touch-action:none;
+      background:rgba(0,0,0,0.65);z-index:200;touch-action:none;overflow-y:auto;
     `;
 
     const panel = document.createElement('div');
     panel.style.cssText = `
       background:#c6c6c6;border:3px solid #555;border-bottom-color:#111;
       border-right-color:#111;padding:16px;font-family:monospace;
-      image-rendering:pixelated;min-width:${9*(SLOT_SIZE+GAP)+GAP}px;
+      image-rendering:pixelated;
     `;
 
     const title = document.createElement('div');
@@ -53,10 +57,9 @@ export class InventoryScreen {
     title.style.cssText = `font-size:14px;font-weight:bold;color:#333;margin-bottom:10px;`;
     panel.appendChild(title);
 
-    const grid = document.createElement('div');
-    grid.style.cssText = `display:flex;flex-direction:column;gap:${GAP*2}px;`;
-    panel.appendChild(grid);
-    this._grid = grid;
+    const body = document.createElement('div');
+    panel.appendChild(body);
+    this._body = body;
 
     const tooltip = document.createElement('div');
     tooltip.style.cssText = `
@@ -79,7 +82,7 @@ export class InventoryScreen {
   }
 
   open(slots) {
-    this._slots = slots && slots.length ? slots : new Array(45).fill(null);
+    this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
     this._render();
     this._el.style.display = 'flex';
     this._open = true;
@@ -95,27 +98,66 @@ export class InventoryScreen {
   isOpen() { return this._open; }
 
   updateSlots(slots) {
-    this._slots = slots && slots.length ? slots : new Array(45).fill(null);
+    this._slots = slots && slots.length ? [...slots] : new Array(46).fill(null);
     if (this._open) this._render();
   }
 
+  _row(indices) {
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;gap:${GAP}px;`;
+    for (const idx of indices) row.appendChild(this._makeSlot(idx));
+    return row;
+  }
+
+  _label(text) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = `font-size:11px;color:#444;margin:6px 0 2px;`;
+    return el;
+  }
+
+  _sep() {
+    const el = document.createElement('div');
+    el.style.cssText = `height:2px;border-top:2px solid #999;margin:6px 0 4px;`;
+    return el;
+  }
+
   _render() {
-    this._grid.innerHTML = '';
-    for (let ri = 0; ri < ROWS.length; ri++) {
-      const { label, slots } = ROWS[ri];
-      if (ri === 3) {
-        // Gap between main inventory and hotbar
-        const sep = document.createElement('div');
-        sep.style.cssText = `height:4px;border-top:2px solid #999;margin:2px 0;`;
-        this._grid.appendChild(sep);
-      }
-      const row = document.createElement('div');
-      row.style.cssText = `display:flex;gap:${GAP}px;`;
-      for (const idx of slots) {
-        row.appendChild(this._makeSlot(idx));
-      }
-      this._grid.appendChild(row);
-    }
+    const b = this._body;
+    b.innerHTML = '';
+
+    // ── Crafting area (top) ───────────────────────────────────────────────────
+    const craftRow = document.createElement('div');
+    craftRow.style.cssText = `display:flex;align-items:center;gap:12px;margin-bottom:8px;`;
+
+    // 2×2 grid (slots 1–4)
+    const craftGrid = document.createElement('div');
+    craftGrid.style.cssText = `display:grid;grid-template-columns:repeat(2,${SLOT_SIZE}px);gap:${GAP}px;`;
+    for (const idx of [1, 2, 3, 4]) craftGrid.appendChild(this._makeSlot(idx));
+
+    const arrow = document.createElement('div');
+    arrow.textContent = '➜';
+    arrow.style.cssText = `font-size:24px;color:#555;`;
+
+    // Crafting output (slot 0)
+    const outputWrap = document.createElement('div');
+    outputWrap.appendChild(this._makeSlot(0));
+
+    craftRow.appendChild(craftGrid);
+    craftRow.appendChild(arrow);
+    craftRow.appendChild(outputWrap);
+    b.appendChild(craftRow);
+
+    b.appendChild(this._sep());
+
+    // ── Main inventory (slots 9–35) ───────────────────────────────────────────
+    for (const rowSlots of MAIN_ROWS) b.appendChild(this._row(rowSlots));
+
+    b.appendChild(this._sep());
+
+    // ── Hotbar (slots 36–44) ─────────────────────────────────────────────────
+    b.appendChild(this._label('Hotbar'));
+    b.appendChild(this._row(range(36, 45)));
   }
 
   _makeSlot(idx) {
