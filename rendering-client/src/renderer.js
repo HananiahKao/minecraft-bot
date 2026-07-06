@@ -114,6 +114,7 @@ export class MinecraftRenderer {
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
       geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+      geo.computeBoundingSphere(); // pre-compute so Three.js frustum culling never stalls on render
       const mesh = new THREE.Mesh(geo, CHUNK_MATERIAL);
       this.scene.add(mesh);
       this.chunkMeshes.set(key, mesh);
@@ -127,6 +128,7 @@ export class MinecraftRenderer {
       geoT.setAttribute('position', new THREE.BufferAttribute(tPositions, 3));
       geoT.setAttribute('normal',   new THREE.BufferAttribute(tNormals,   3));
       geoT.setAttribute('color',    new THREE.BufferAttribute(tColors,    3));
+      geoT.computeBoundingSphere();
       const meshT = new THREE.Mesh(geoT, CHUNK_TRANSPARENT_MATERIAL);
       this.scene.add(meshT);
       this.chunkMeshesT.set(key, meshT);

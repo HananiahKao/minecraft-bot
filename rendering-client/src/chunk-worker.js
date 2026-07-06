@@ -111,9 +111,34 @@ const BLOCK_COLORS = {
   cartography_table: 0x8b6914, lectern: 0x8b6f47,
   torch: 0xe8a820, wall_torch: 0xe8a820,
   ladder: 0x8b6914,
-  // beds & carpets
-  white_bed: 0xf0f0f0, yellow_bed: 0xfdd835,
-  white_carpet: 0xf0f0f0, yellow_carpet: 0xfdd835,
+  // beds & carpets — full colour set
+  white_bed: 0xf0f0f0, orange_bed: 0xf5a623, magenta_bed: 0xef5350,
+  light_blue_bed: 0x64b5f6, yellow_bed: 0xfdd835, lime_bed: 0x81c784,
+  pink_bed: 0xf48fb1, gray_bed: 0x757575, light_gray_bed: 0xbdbdbd,
+  cyan_bed: 0x26c6da, purple_bed: 0xab47bc, blue_bed: 0x3a5fbf,
+  brown_bed: 0xa1887f, green_bed: 0x558b2f, red_bed: 0xd32f2f, black_bed: 0x212121,
+  white_carpet: 0xf0f0f0, orange_carpet: 0xf5a623, magenta_carpet: 0xef5350,
+  light_blue_carpet: 0x64b5f6, yellow_carpet: 0xfdd835, lime_carpet: 0x81c784,
+  pink_carpet: 0xf48fb1, gray_carpet: 0x757575, light_gray_carpet: 0xbdbdbd,
+  cyan_carpet: 0x26c6da, purple_carpet: 0xab47bc, blue_carpet: 0x3a5fbf,
+  brown_carpet: 0xa1887f, green_carpet: 0x558b2f, red_carpet: 0xd32f2f, black_carpet: 0x212121,
+  // ice & snow
+  ice: 0xa8d8f0, frosted_ice: 0x90c8e8, packed_ice: 0x78b8e8, blue_ice: 0x5098d0,
+  snow: 0xf0f4f0, snow_block: 0xf0f4f0, powder_snow: 0xe8eef8,
+  // light sources
+  lantern: 0xffbb55, soul_lantern: 0x55bbff,
+  glowstone: 0xffcc77, shroomlight: 0xff9944,
+  // fire
+  fire: 0xff7733, soul_fire: 0x3399ff,
+  // deep dark / sculk
+  sculk: 0x0d2233, sculk_catalyst: 0x151f28, sculk_sensor: 0x0d3045,
+  sculk_shrieker: 0x1a2a3a, sculk_vein: 0x0d2a3a,
+  // more wood variants
+  stripped_spruce_wood: 0x9b7d5a, stripped_birch_wood: 0xd4c090,
+  stripped_oak_log: 0xb8904a, stripped_spruce_log: 0x9b7d5a,
+  stripped_birch_log: 0xd4c090, stripped_jungle_log: 0xa07840,
+  stripped_acacia_log: 0xb8784a, stripped_dark_oak_log: 0x6a4a2a,
+  stripped_mangrove_log: 0xa06050, stripped_cherry_log: 0xc09090,
   // village
   bee_nest: 0xc8a951, bell: 0xffd700,
 };
@@ -129,7 +154,8 @@ const TRANSPARENT_BLOCKS = new Set([
   'cyan_stained_glass', 'purple_stained_glass', 'blue_stained_glass',
   'brown_stained_glass', 'green_stained_glass', 'red_stained_glass',
   'black_stained_glass', 'white_stained_glass_pane', 'orange_stained_glass_pane',
-  'ice', 'frosted_ice',
+  'ice', 'frosted_ice', 'packed_ice', 'blue_ice',
+  'fire', 'soul_fire',
 ]);
 
 const colorCache = new Map();
