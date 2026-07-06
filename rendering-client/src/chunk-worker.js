@@ -105,6 +105,8 @@ const BLOCK_COLORS = {
   beetroots: 0x8b1a1a, sugar_cane: 0x5ba85b,
   fern: 0x2d8a2d, large_fern: 0x2d8a2d,
   hay_block: 0xe8c84a, pumpkin: 0xe87818,
+  cactus: 0x3d6e2d, dead_bush: 0x8b6914,
+  bone_block: 0xe8e0d0,
   farmland: 0x6b4226,
   // utility blocks
   composter: 0x6b3a2a, brewing_stand: 0x4a4a4a,
