@@ -156,14 +156,36 @@ function initBot() {
     });
   });
 
+  // Track pending item entity IDs — entitySpawn fires before the metadata packet arrives.
+  const _pendingItems = new Set();
+
   bot.on('entitySpawn', (entity) => {
-    if (entity.name !== 'item' || !entity.metadata) return;
-    const meta = entity.metadata;
-    // Item stack is stored in metadata slot 8 for 1.17+ (ItemStack type)
-    const stack = meta[8] || meta[7];
-    const itemName = stack && stack.itemId != null
-      ? (bot.registry.items[stack.itemId] || {}).name || 'unknown'
-      : 'unknown';
+    if (entity.name !== 'item') return;
+    _pendingItems.add(entity.id);
+  });
+
+  // entity_metadata arrives shortly after entitySpawn and carries the item stack.
+  bot._client.on('entity_metadata', (packet) => {
+    const entity = bot.entities[packet.entityId];
+    if (!entity || entity.name !== 'item') return;
+    if (!_pendingItems.has(packet.entityId)) return;
+    _pendingItems.delete(packet.entityId);
+
+    // Metadata is an array of { key, type, value } entries.
+    // Item entities store the item stack at key 8 (type 'slot' / 'item').
+    let itemName = 'unknown';
+    for (const entry of packet.metadata) {
+      if (entry.key === 8) {
+        const slot = entry.value;
+        // slot may be { itemId, itemCount, ... } or { type, count, ... }
+        const id = slot && (slot.itemId ?? slot.type);
+        if (id != null && id !== -1) {
+          itemName = (bot.registry.items[id] || {}).name || 'unknown';
+        }
+        break;
+      }
+    }
+
     broadcastMessage({
       type: 'entity_spawn',
       id: entity.id,
@@ -188,6 +210,7 @@ function initBot() {
 
   bot.on('entityGone', (entity) => {
     if (entity.name !== 'item') return;
+    _pendingItems.delete(entity.id);
     broadcastMessage({ type: 'entity_destroy', id: entity.id });
   });
 
