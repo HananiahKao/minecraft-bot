@@ -376,11 +376,18 @@ export class WindowScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
+        let next;
         if (!this._heldItem) {
-          this._pickUp(item, e.clientX, e.clientY);
+          next = item;
+        } else if (!item) {
+          next = null;
+        } else if (this._heldItem.name === item.name) {
+          const combined = this._heldItem.count + item.count;
+          next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
         } else {
-          this._pickUp(null, e.clientX, e.clientY);
+          next = item;
         }
+        this._pickUp(next, e.clientX, e.clientY);
       } else if (btn === 1 && this._heldItem) {
         const newCount = this._heldItem.count - 1;
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
@@ -433,11 +440,18 @@ export class WindowScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
+        let next;
         if (!this._heldItem) {
-          this._pickUp(item, e.clientX, e.clientY);
+          next = item;
+        } else if (!item) {
+          next = null;
+        } else if (this._heldItem.name === item.name) {
+          const combined = this._heldItem.count + item.count;
+          next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
         } else {
-          this._pickUp(null, e.clientX, e.clientY);
+          next = item;
         }
+        this._pickUp(next, e.clientX, e.clientY);
       } else if (btn === 1 && this._heldItem) {
         const newCount = this._heldItem.count - 1;
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);

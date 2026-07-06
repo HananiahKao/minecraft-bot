@@ -293,13 +293,18 @@ export class InventoryScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        // Optimistic pick-up only when cursor is empty — server corrects within ~80ms
+        let next;
         if (!this._heldItem) {
-          this._pickUpItem(item, e.clientX, e.clientY);
+          next = item; // pick up
+        } else if (!item) {
+          next = null; // place onto empty slot
+        } else if (this._heldItem.name === item.name) {
+          const combined = this._heldItem.count + item.count;
+          next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
         } else {
-          // Cursor occupied — clear optimistically; server will send real cursor state
-          this._pickUpItem(null, e.clientX, e.clientY);
+          next = item; // swap
         }
+        this._pickUpItem(next, e.clientX, e.clientY);
       } else if (btn === 1 && this._heldItem) {
         // Right click: place one item from cursor — decrement held count optimistically
         const newCount = this._heldItem.count - 1;
