@@ -3,7 +3,7 @@
  */
 
 export class BridgeConnection {
-  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot, onInventory, onWindowOpen, onWindowClose, onWindowUpdate) {
+  constructor(onChunk, onBotReady, onBotPosition, onError, onHotbar, onHeldSlot, onInventory, onWindowOpen, onWindowClose, onWindowUpdate, onEntitySpawn, onEntityMove, onEntityDestroy) {
     this.ws = null;
     this.isConnected = false;
     this.onChunk = onChunk;
@@ -17,6 +17,9 @@ export class BridgeConnection {
     this.onWindowOpen = onWindowOpen;
     this.onWindowClose = onWindowClose;
     this.onWindowUpdate = onWindowUpdate;
+    this.onEntitySpawn = onEntitySpawn;
+    this.onEntityMove = onEntityMove;
+    this.onEntityDestroy = onEntityDestroy;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
   }
@@ -96,6 +99,15 @@ export class BridgeConnection {
         break;
       case 'window_update':
         if (this.onWindowUpdate) this.onWindowUpdate(message);
+        break;
+      case 'entity_spawn':
+        if (this.onEntitySpawn) this.onEntitySpawn(message);
+        break;
+      case 'entity_move':
+        if (this.onEntityMove) this.onEntityMove(message);
+        break;
+      case 'entity_destroy':
+        if (this.onEntityDestroy) this.onEntityDestroy(message.id);
         break;
       case 'error':
         console.error('Bridge error:', message.message);

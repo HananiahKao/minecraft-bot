@@ -10,8 +10,10 @@ import { BridgeConnection } from './connection.js';
 import { setupMobileControls } from './mobile.js';
 import { InventoryScreen } from './inventory.js';
 import { WindowScreen } from './window-screen.js';
+import { EntityManager } from './entity-manager.js';
 
 let renderer = null;
+let entityManager = null;
 let inputHandler = null;
 let connection = null;
 let worker = null;
@@ -61,6 +63,7 @@ let _jumpPeakTime = null;
 function init() {
   const container = document.getElementById('canvas');
   renderer = new MinecraftRenderer(container);
+  entityManager = new EntityManager(renderer.scene);
   inputHandler = new InputHandler(renderer.camera);
 
   _inventoryScreen = new InventoryScreen({
@@ -84,6 +87,9 @@ function init() {
     onWindowOpen,
     onWindowClose,
     onWindowUpdate,
+    (msg) => entityManager && entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName),
+    (msg) => entityManager && entityManager.moveItem(msg.id, msg.x, msg.y, msg.z),
+    (id)  => entityManager && entityManager.destroy(id),
   );
 
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
@@ -143,6 +149,7 @@ function init() {
 
 function onBotReady(position, gameMode) {
   console.log('🤖 Bot ready at', position, 'mode:', gameMode);
+  if (entityManager) entityManager.clear(); // stale item entities from previous session
   renderer.setCameraPosition(position[0], position[1] + 1.6, position[2]);
   // survival/adventure: 4.5 block reach; creative: 5 blocks
   renderer.setReach(gameMode === 'creative' ? 5 : 4.5);
@@ -344,6 +351,7 @@ let _fpsFrames = 0;
 let _currentFps = 0;
 let _frameBudgetViolations = 0;
 let _lastRafTimestamp = 0;
+let _lastFrameGap = 16; // ms; seed with 60fps default
 let _frameTimeSum = 0;
 let _frameTimeCount = 0;
 let _maxFrameTime = 0;
@@ -381,6 +389,7 @@ function startUpdateLoop() {
     // Track wall-clock inter-frame gap (includes GPU time the CPU waits on)
     if (_lastRafTimestamp > 0) {
       const gap = timestamp - _lastRafTimestamp;
+      _lastFrameGap = gap;
       _frameTimeSum += gap;
       _frameTimeCount++;
       if (gap > _maxFrameTime) _maxFrameTime = gap;
@@ -445,6 +454,9 @@ function startUpdateLoop() {
         else if (msg.type === 'window_property')  { if (_windowScreen) _windowScreen.updateProperty(msg.property, msg.value); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
+        else if (msg.type === 'entity_spawn')     { if (entityManager) entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName); }
+        else if (msg.type === 'entity_move')      { if (entityManager) entityManager.moveItem(msg.id, msg.x, msg.y, msg.z); }
+        else if (msg.type === 'entity_destroy')   { if (entityManager) entityManager.destroy(msg.id); }
       } catch (e) {}
     }
     const _dt_parse = performance.now() - _t_parse;
@@ -496,6 +508,10 @@ function startUpdateLoop() {
     const _dt_add = performance.now() - _t_add;
 
     const _t_render = performance.now();
+    if (entityManager) {
+      // _lastRafTimestamp already updated to timestamp above; use gap computed at frame top
+      entityManager.tick(_lastFrameGap / 1000);
+    }
     renderer.updateRaycast();
     renderer.render();
     const _dt_render = performance.now() - _t_render;

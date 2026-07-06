@@ -156,6 +156,41 @@ function initBot() {
     });
   });
 
+  bot.on('entitySpawn', (entity) => {
+    if (entity.name !== 'item' || !entity.metadata) return;
+    const meta = entity.metadata;
+    // Item stack is stored in metadata slot 8 for 1.17+ (ItemStack type)
+    const stack = meta[8] || meta[7];
+    const itemName = stack && stack.itemId != null
+      ? (bot.registry.items[stack.itemId] || {}).name || 'unknown'
+      : 'unknown';
+    broadcastMessage({
+      type: 'entity_spawn',
+      id: entity.id,
+      kind: 'item',
+      x: entity.position.x,
+      y: entity.position.y,
+      z: entity.position.z,
+      itemName,
+    });
+  });
+
+  bot.on('entityMoved', (entity) => {
+    if (entity.name !== 'item') return;
+    broadcastMessage({
+      type: 'entity_move',
+      id: entity.id,
+      x: entity.position.x,
+      y: entity.position.y,
+      z: entity.position.z,
+    });
+  });
+
+  bot.on('entityGone', (entity) => {
+    if (entity.name !== 'item') return;
+    broadcastMessage({ type: 'entity_destroy', id: entity.id });
+  });
+
   bot.on('playerCollect', () => { broadcastHotbar(); broadcastInventory(); });
   bot.on('heldItemChanged', () => broadcastHotbar());
   // inventory plugin is only available after spawn
