@@ -55,16 +55,19 @@ let _digInProgress = false;
 let _digTarget = null;
 let _serverCanFly = false;
 let _reconnectScheduled = false;
-
+let _reconnectDelay = 2000; // grows on repeated failures, resets on successful spawn
 
 function scheduleReconnect() {
   if (_reconnectScheduled) return;
   _reconnectScheduled = true;
+  const delay = _reconnectDelay;
+  _reconnectDelay = Math.min(_reconnectDelay * 2, 30000); // cap at 30s
+  console.log(`Reconnecting in ${delay / 1000}s...`);
   setTimeout(() => {
     _reconnectScheduled = false;
     console.log('Attempting to reconnect...');
     initBot();
-  }, 2000);
+  }, delay);
 }
 
 function initBot() {
@@ -102,6 +105,7 @@ function initBot() {
   bot.on('spawn', () => {
     console.log('✅ Bot spawned!');
     if (bot.entity) console.log(`📍 Position: ${bot.entity.position.toString()}`);
+    _reconnectDelay = 2000; // reset backoff on successful connection
     botReady = true;
     _pickInProgress = false;
 
@@ -205,11 +209,9 @@ function initBot() {
     console.error('❌ Bot error:', err.message);
     botReady = false;
     broadcastMessage({ type: 'error', message: err.message || 'Unknown error' });
-    // 'end' fires after most errors, but ECONNREFUSED only fires 'error' — schedule
-    // a retry here too so a failed connection attempt doesn't silently stop retrying.
-    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
-      scheduleReconnect();
-    }
+    // 'end' fires after most errors, but some (e.g. ECONNREFUSED, ping ETIMEDOUT)
+    // only fire 'error' — always schedule a reconnect here.
+    scheduleReconnect();
   });
 
   bot.on('end', (reason) => {
