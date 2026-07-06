@@ -442,6 +442,7 @@ function startUpdateLoop() {
         else if (msg.type === 'window_open')      { onWindowOpen(msg); }
         else if (msg.type === 'window_close')     { onWindowClose(); }
         else if (msg.type === 'window_update')    { onWindowUpdate(msg); }
+        else if (msg.type === 'window_property')  { if (_windowScreen) _windowScreen.updateProperty(msg.property, msg.value); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
       } catch (e) {}

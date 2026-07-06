@@ -57,6 +57,7 @@ export class WindowScreen {
     this._onClickSlot = onClickSlot;
     this._open = false;
     this._heldItem = null;
+    this._properties = {};    // window properties (furnace progress, etc.)
     this._el = null;
     this._body = null;
     this._cursor = null;
@@ -123,6 +124,7 @@ export class WindowScreen {
     this._slots = slots || [];
     this._playerSlots = playerSlots || [];
     this._inventoryStart = inventoryStart || 0;
+    this._properties = {};
     this._title.textContent = parseTitle(title);
     this._clearHeld();
     this._render();
@@ -148,6 +150,24 @@ export class WindowScreen {
       this._renderCursor();
     }
     if (this._open) this._render();
+  }
+
+  updateProperty(property, value) {
+    this._properties[property] = value;
+    if (this._open) this._renderProgress();
+  }
+
+  // Update only the progress elements without rebuilding the whole DOM
+  _renderProgress() {
+    const fuelEl = this._el.querySelector('#furnace-fuel-bar');
+    const cookEl = this._el.querySelector('#furnace-cook-bar');
+    if (!fuelEl && !cookEl) return;
+    const fuelRemain = this._properties[0] ?? 0;
+    const fuelMax    = this._properties[1] || 200;
+    const cookProg   = this._properties[2] ?? 0;
+    const cookMax    = this._properties[3] || 200;
+    if (fuelEl) fuelEl.style.height = Math.round((fuelRemain / fuelMax) * 100) + '%';
+    if (cookEl) cookEl.style.width  = Math.round((cookProg  / cookMax)  * 100) + '%';
   }
 
   _renderCursor() {
@@ -228,19 +248,59 @@ export class WindowScreen {
       b.appendChild(row);
 
     } else if (t.includes('furnace') || t.includes('smoker') || t.includes('blast')) {
-      // Input (slot 0) + fuel (slot 1) → arrow → output (slot 2)
+      // Input (slot 0) + flame bar + fuel (slot 1)  →  cook-arrow  →  output (slot 2)
+      const fuelRemain = this._properties[0] ?? 0;
+      const fuelMax    = this._properties[1] || 200;
+      const cookProg   = this._properties[2] ?? 0;
+      const cookMax    = this._properties[3] || 200;
+      const fuelPct    = Math.round((fuelRemain / fuelMax) * 100);
+      const cookPct    = Math.round((cookProg  / cookMax)  * 100);
+
       const left = document.createElement('div');
-      left.style.cssText = `display:flex;flex-direction:column;gap:${GAP}px;`;
+      left.style.cssText = `display:flex;flex-direction:column;align-items:center;gap:${GAP}px;`;
       left.appendChild(this._grid([0], 1));
-      const fuelLbl = document.createElement('div');
-      fuelLbl.textContent = '🔥';
-      fuelLbl.style.cssText = `text-align:center;font-size:14px;`;
-      left.appendChild(fuelLbl);
+
+      // Flame indicator — fills from bottom, height driven by fuel remaining
+      const flameBg = document.createElement('div');
+      flameBg.style.cssText = `
+        width:18px;height:${SLOT_SIZE * 0.7}px;background:#555;border:1px solid #333;
+        border-radius:2px;display:flex;flex-direction:column;justify-content:flex-end;
+        overflow:hidden;position:relative;
+      `;
+      const flameFill = document.createElement('div');
+      flameFill.id = 'furnace-fuel-bar';
+      flameFill.style.cssText = `width:100%;background:#f84;height:${fuelPct}%;transition:height 0.5s linear;`;
+      flameBg.appendChild(flameFill);
+      const flameIcon = document.createElement('div');
+      flameIcon.textContent = '🔥';
+      flameIcon.style.cssText = `position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;`;
+      flameBg.appendChild(flameIcon);
+      left.appendChild(flameBg);
+
       left.appendChild(this._grid([1], 1));
+
+      // Cook-progress arrow — fills left to right
+      const arrowWrap = document.createElement('div');
+      arrowWrap.style.cssText = `display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6px;gap:4px;`;
+      const arrowTrack = document.createElement('div');
+      arrowTrack.style.cssText = `
+        width:${SLOT_SIZE * 1.2}px;height:16px;background:#555;border:1px solid #333;
+        border-radius:2px;overflow:hidden;
+      `;
+      const arrowFill = document.createElement('div');
+      arrowFill.id = 'furnace-cook-bar';
+      arrowFill.style.cssText = `height:100%;background:#5af;width:${cookPct}%;transition:width 0.5s linear;`;
+      arrowTrack.appendChild(arrowFill);
+      const arrowLabel = document.createElement('div');
+      arrowLabel.textContent = '➜';
+      arrowLabel.style.cssText = `font-size:20px;color:#555;`;
+      arrowWrap.appendChild(arrowTrack);
+      arrowWrap.appendChild(arrowLabel);
+
       const row = document.createElement('div');
       row.style.cssText = `display:flex;align-items:center;gap:4px;`;
       row.appendChild(left);
-      row.appendChild(this._arrow());
+      row.appendChild(arrowWrap);
       row.appendChild(this._grid([2], 1));
       b.appendChild(row);
 

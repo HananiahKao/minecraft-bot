@@ -175,6 +175,10 @@ function initBot() {
     });
     // Forward container slot changes — debounced so all set_slot packets in a batch settle first
     win.on('updateSlot', () => scheduleWindowUpdate(win));
+    // Forward window properties (furnace burn/cook progress, etc.)
+    win.on('updateProperty', (property, value) => {
+      broadcastMessage({ type: 'window_property', property, value });
+    });
   });
 
   bot.on('windowClose', () => {
