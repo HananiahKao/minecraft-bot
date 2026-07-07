@@ -427,6 +427,16 @@ export class WindowScreen {
         cnt.textContent = item.count;
         cell.appendChild(cnt);
       }
+      if (item.maxDurability > 0) {
+        const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
+        const barColor = pct > 0.6 ? '#5f5' : pct > 0.3 ? '#ff5' : '#f55';
+        const bar = document.createElement('div');
+        bar.style.cssText = `position:absolute;bottom:1px;left:2px;right:2px;height:2px;background:#111;pointer-events:none;border-radius:1px;`;
+        const fill = document.createElement('div');
+        fill.style.cssText = `height:100%;width:${Math.round(pct * 100)}%;background:${barColor};border-radius:1px;`;
+        bar.appendChild(fill);
+        cell.appendChild(bar);
+      }
     }
 
     cell.addEventListener('mouseenter', () => {

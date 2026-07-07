@@ -224,7 +224,7 @@ function initBot() {
   });
 
   bot.on('windowOpen', (win) => {
-    const mapItem = item => item ? { name: item.name, count: item.count } : null;
+    const mapItem = item => item ? { name: item.name, count: item.count, durabilityUsed: item.durabilityUsed || 0, maxDurability: item.maxDurability || 0 } : null;
     broadcastMessage({
       type: 'window_open',
       windowType: win.type,
@@ -356,7 +356,7 @@ function broadcastInventory() {
   const slots = [];
   for (let i = 0; i <= 44; i++) {
     const item = bot.inventory.slots[i];
-    slots.push(item ? { name: item.name, count: item.count } : null);
+    slots.push(item ? { name: item.name, count: item.count, durabilityUsed: item.durabilityUsed || 0, maxDurability: item.maxDurability || 0 } : null);
   }
   broadcastMessage({ type: 'inventory', slots, cursorItem: getCursorItem() });
 }
@@ -368,7 +368,7 @@ function scheduleWindowUpdate(win) {
   _windowUpdateTimer = setTimeout(() => {
     _windowUpdateTimer = null;
     if (!win) return;
-    const mapItem = item => item ? { name: item.name, count: item.count } : null;
+    const mapItem = item => item ? { name: item.name, count: item.count, durabilityUsed: item.durabilityUsed || 0, maxDurability: item.maxDurability || 0 } : null;
     broadcastMessage({
       type: 'window_update',
       slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
@@ -517,7 +517,16 @@ wss.on('connection', (ws) => {
         // bot.currentWindow is null when no container is open (player inventory only).
         // bot.clickWindow() throws "No window open" in that case, so use bot.inventory.
         if (!bot.currentWindow) bot.currentWindow = bot.inventory;
+        const _clickWin = bot.currentWindow;
         bot.clickWindow(message.slot, message.mouseButton, message.mode || 0)
+          .then(() => {
+            // Force a broadcast after the click resolves so slot counts update immediately
+            if (_clickWin === bot.inventory || _clickWin === bot.currentWindow) {
+              scheduleInventoryUpdate();
+            } else {
+              scheduleWindowUpdate(_clickWin);
+            }
+          })
           .catch(e => console.warn('window_click failed:', e.message));
       } else if (message.type === 'close_window' && botReady && bot) {
         if (bot.currentWindow && bot.currentWindow !== bot.inventory) {

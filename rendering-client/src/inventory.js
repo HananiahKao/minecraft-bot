@@ -270,6 +270,17 @@ export class InventoryScreen {
         cnt.textContent = item.count;
         cell.appendChild(cnt);
       }
+
+      if (item.maxDurability > 0) {
+        const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
+        const barColor = pct > 0.6 ? '#5f5' : pct > 0.3 ? '#ff5' : '#f55';
+        const bar = document.createElement('div');
+        bar.style.cssText = `position:absolute;bottom:1px;left:2px;right:2px;height:2px;background:#111;pointer-events:none;border-radius:1px;`;
+        const fill = document.createElement('div');
+        fill.style.cssText = `height:100%;width:${Math.round(pct * 100)}%;background:${barColor};border-radius:1px;`;
+        bar.appendChild(fill);
+        cell.appendChild(bar);
+      }
     }
 
     // Hover highlight
@@ -292,10 +303,14 @@ export class InventoryScreen {
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
+      // Slot 0 is the craft result — can only take from it, never place into it
+      const isCraftResult = idx === 0;
       if (btn === 0) {
         let next;
         if (!this._heldItem) {
           next = item; // pick up
+        } else if (isCraftResult) {
+          next = this._heldItem; // can't place into craft result — keep held item
         } else if (!item) {
           next = null; // place onto empty slot
         } else if (this._heldItem.name === item.name) {
@@ -305,7 +320,7 @@ export class InventoryScreen {
           next = item; // swap
         }
         this._pickUpItem(next, e.clientX, e.clientY);
-      } else if (btn === 1 && this._heldItem) {
+      } else if (btn === 1 && this._heldItem && !isCraftResult) {
         // Right click: place one item from cursor — decrement held count optimistically
         const newCount = this._heldItem.count - 1;
         this._pickUpItem(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
