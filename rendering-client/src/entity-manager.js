@@ -20,6 +20,8 @@ const ITEM_COLORS = {
   golden_sword: 0xffd700, diamond_sword: 0x40e0d0,
   wooden_pickaxe: 0xc8a870, stone_pickaxe: 0x888888, iron_pickaxe: 0xd0d0d0,
   glass: 0xc0e8f8, glass_pane: 0xc0e8f8,
+  oak_sapling: 0x2d8b22, spruce_sapling: 0x1a5c1a, birch_sapling: 0x4d7d2d,
+  jungle_sapling: 0x2d6b2d, acacia_sapling: 0x4d7d1a, dark_oak_sapling: 0x1a4d1a,
   torch: 0xffdd88, crafting_table: 0xb08040, furnace: 0x888888,
   chest: 0xb08040, bookshelf: 0xa08060, tnt: 0xff3333,
   water_bucket: 0x4080ff, lava_bucket: 0xff6600, bucket: 0xb0b0b0,
