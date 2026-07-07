@@ -577,6 +577,16 @@ function startUpdateLoop() {
   requestAnimationFrame(loop);
 }
 
+function fallbackCopy(text, cb) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); cb(); } catch (_) {}
+  document.body.removeChild(ta);
+}
+
 function updateMetrics() {
   const el = document.getElementById('metrics');
   if (!el) return;
@@ -695,10 +705,12 @@ function updateMetrics() {
   if (copyBtn) {
     copyBtn.onclick = (e) => {
       e.stopPropagation();
-      navigator.clipboard.writeText(plainText).then(() => {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-      });
+      const finish = () => { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(plainText).then(finish).catch(() => fallbackCopy(plainText, finish));
+      } else {
+        fallbackCopy(plainText, finish);
+      }
     };
   }
 }
