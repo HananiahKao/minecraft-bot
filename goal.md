@@ -33,14 +33,15 @@ Block interaction (breaking/placing)
 
 ### Phase 4
 Polish & visual completeness — make it feel like the official client
-- [ ] Item entity rendering (floating rotating cubes when blocks are broken)
+- [x] Item entity rendering (floating rotating cubes when blocks are broken)
+- [ ] Tool durability bar in hotbar and inventory slots (green→yellow→red decay bar)
 - [ ] Camera fluid overlay: blue tint when underwater, orange when in lava
 - [ ] Water/lava block rendering (transparent, currently invisible)
 - [ ] Block breaking animation (crack overlay while mining)
 - [ ] First-person hand/arm model holding held item
 - [ ] Health & hunger HUD (survival mode)
 - [ ] Entity rendering: other players, mobs
-- [ ] Inventory screen (open/close bag, move items)
+- [x] Inventory screen (open/close bag, move items)
 - [ ] Spectator: inside-block visual (official client shows darkness/fog, we show chunk void)
 
 ## "Fully Playable" Definition
