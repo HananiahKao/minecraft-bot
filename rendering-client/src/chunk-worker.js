@@ -161,7 +161,14 @@ const TRANSPARENT_BLOCKS = new Set([
   'black_stained_glass', 'white_stained_glass_pane', 'orange_stained_glass_pane',
   'ice', 'frosted_ice', 'packed_ice', 'blue_ice',
   'fire', 'soul_fire',
+]);
+
+// Blocks that render as solid but don't occlude adjacent faces (you can see around them).
+// They go in the opaque pass but neighbors are NOT face-culled against them.
+const NON_OCCLUDING_BLOCKS = new Set([
   'ladder', 'vine', 'scaffolding',
+  'torch', 'wall_torch', 'soul_torch', 'redstone_torch',
+  'tripwire', 'tripwire_hook',
 ]);
 
 const colorCache = new Map();
@@ -202,12 +209,14 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
   const yRange = yMax - yMin + 1;
   // Grid indexed by (x, z, y-yMin) so negative Y works without remapping
   const grid = new Uint16Array(16 * 16 * yRange);
-  // Track which block IDs are transparent for culling
-  const transparentIds = new Set(); // non-air transparent block ids (water, glass, etc.)
+  // Track which block IDs are transparent/non-occluding for culling
+  const transparentIds = new Set();
+  const nonOccludingIds = new Set();
   for (const { x, y, z, name } of blocks) {
     let id = nameIndex.get(name);
     if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
     if (TRANSPARENT_BLOCKS.has(name)) transparentIds.add(id);
+    if (NON_OCCLUDING_BLOCKS.has(name)) nonOccludingIds.add(id);
     grid[x + z * 16 + (y - yMin) * 16 * 16] = id;
   }
 
@@ -263,6 +272,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       nameList.push(name);
       nameIndex.set(name, id);
       if (TRANSPARENT_BLOCKS.has(name)) transparentIds.add(id);
+    if (NON_OCCLUDING_BLOCKS.has(name)) nonOccludingIds.add(id);
     }
     return id;
   }
@@ -276,8 +286,8 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
-  // A neighbor blocks a face only if it is solid (non-zero and not transparent)
-  function isSolid(id) { return id !== 0 && !transparentIds.has(id); }
+  // A neighbor blocks a face only if it fully covers it (solid, not transparent, not non-occluding)
+  function isSolid(id) { return id !== 0 && !transparentIds.has(id) && !nonOccludingIds.has(id); }
   // Suppress internal faces between two transparent blocks of the same kind (e.g. water-water)
   function suppressTransparent(bt, neighbor) { return neighbor !== 0 && transparentIds.has(bt) && transparentIds.has(neighbor); }
 
