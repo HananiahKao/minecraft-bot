@@ -161,6 +161,7 @@ const TRANSPARENT_BLOCKS = new Set([
   'black_stained_glass', 'white_stained_glass_pane', 'orange_stained_glass_pane',
   'ice', 'frosted_ice', 'packed_ice', 'blue_ice',
   'fire', 'soul_fire',
+  'ladder', 'vine', 'scaffolding',
 ]);
 
 const colorCache = new Map();
