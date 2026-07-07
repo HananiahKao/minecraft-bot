@@ -331,15 +331,17 @@ function updateHotbar() {
     if (item && item.maxDurability > 0) {
       const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
       const col = pct > 0.6 ? '#5f5' : pct > 0.3 ? '#ff5' : '#f55';
-      durBar = `<div style="position:absolute;bottom:2px;left:3px;right:3px;height:2px;background:#111;border-radius:1px;">
-        <div style="height:100%;width:${Math.round(pct*100)}%;background:${col};border-radius:1px;"></div></div>`;
+      durBar = `<div style="position:absolute;bottom:2px;left:3px;right:3px;height:2px;background:#111;border-radius:1px;"><div style="height:100%;width:${Math.round(pct*100)}%;background:${col};border-radius:1px;"></div></div>`;
     }
+    const countBadge = (item && item.count > 1)
+      ? `<div style="position:absolute;bottom:4px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;">${item.count}</div>`
+      : '';
     return `<div style="
       width:44px;height:44px;border:2px solid ${active ? '#ffcc00' : '#555'};
       background:rgba(0,0,0,0.6);border-radius:3px;display:flex;flex-direction:column;
       align-items:center;justify-content:center;font-size:9px;color:${active ? '#ffcc00' : '#aaa'};
       text-align:center;line-height:1.2;overflow:hidden;padding:2px;box-sizing:border-box;
-      position:relative;cursor:pointer" data-slot="${i}">${label}${durBar}</div>`;
+      position:relative;cursor:pointer" data-slot="${i}">${label}${countBadge}${durBar}</div>`;
   }).join('');
   el.querySelectorAll('[data-slot]').forEach(div => {
     div.onclick = () => {
