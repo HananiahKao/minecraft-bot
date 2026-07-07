@@ -603,6 +603,7 @@ function updateMetrics() {
   const pendingCount = renderer ? renderer._pending.size : 0;
 
   const unknownList = Array.from(_unknownBlocks).sort();
+  const unknownEntityList = entityManager ? Array.from(entityManager.unknownItems).sort() : [];
   const statsLines = [
     ['b', 'Chunk Build (worker)'],
     ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
@@ -619,6 +620,10 @@ function updateMetrics() {
     ['b', `Unknown Blocks (${unknownList.length})`],
     ...( unknownList.length > 0
       ? unknownList.map(n => ['u', n])
+      : [['', '(none)']] ),
+    ['b', `Unknown Entities (${unknownEntityList.length})`],
+    ...( unknownEntityList.length > 0
+      ? unknownEntityList.map(n => ['u', n])
       : [['', '(none)']] ),
   ];
 

@@ -42,12 +42,15 @@ export class EntityManager {
     this._scene = scene;
     // id (number) → { mesh, itemName }
     this._items = new Map();
+    // item names that had no entry in ITEM_COLORS
+    this.unknownItems = new Set();
   }
 
   spawnItem(id, x, y, z, itemName) {
     if (this._items.has(id)) this.destroy(id);
 
     const color = ITEM_COLORS[itemName] ?? DEFAULT_ITEM_COLOR;
+    if (!(itemName in ITEM_COLORS)) this.unknownItems.add(itemName);
     const mat = new THREE.MeshLambertMaterial({ color });
     const mesh = new THREE.Mesh(_geo, mat);
     // Float 0.1 blocks above ground centre
