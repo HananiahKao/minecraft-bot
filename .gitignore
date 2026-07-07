@@ -27,6 +27,7 @@ libraries/
 versions/
 
 # User Cache & Temp
+.mc-props-hash
 .DS_Store
 *.swp
 *.swo

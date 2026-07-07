@@ -339,7 +339,7 @@ function broadcastHotbar() {
   const slots = [];
   for (let i = 0; i < 9; i++) {
     const item = bot.inventory.slots[36 + i]; // hotbar is slots 36–44 in Minecraft protocol
-    slots.push(item ? { name: item.name, count: item.count } : null);
+    slots.push(item ? { name: item.name, count: item.count, durabilityUsed: item.durabilityUsed || 0, maxDurability: item.maxDurability || 0 } : null);
   }
   broadcastMessage({ type: 'hotbar', slots, heldSlot: bot.quickBarSlot });
 }
