@@ -365,6 +365,15 @@ export class WindowScreen {
         cnt.textContent = item.count;
         cell.appendChild(cnt);
       }
+      if (item.maxDurability > 0) {
+        const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
+        const barColor = pct > 0.6 ? '#5f5' : pct > 0.3 ? '#ff5' : '#f55';
+        const bar = document.createElement('div');
+        bar.style.cssText = `position:absolute;bottom:1px;left:2px;right:2px;height:2px;background:#111;pointer-events:none;border-radius:1px;`;
+        const fill = document.createElement('div');
+        fill.style.cssText = `height:100%;width:${Math.round(pct*100)}%;background:${barColor};border-radius:1px;`;
+        bar.appendChild(fill); cell.appendChild(bar);
+      }
     }
     cell.addEventListener('mouseenter', () => {
       cell.style.background = '#a0a0a0';
@@ -376,21 +385,26 @@ export class WindowScreen {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
       if (btn === 0) {
-        let next;
+        let next, slotNext = item;
         if (!this._heldItem) {
-          next = item;
+          next = item; slotNext = null;
         } else if (!item) {
-          next = null;
+          next = null; slotNext = this._heldItem;
         } else if (this._heldItem.name === item.name) {
           const combined = this._heldItem.count + item.count;
           next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
+          slotNext = { ...item, count: Math.min(64, combined) };
         } else {
-          next = item;
+          next = item; slotNext = this._heldItem;
         }
+        this._playerSlots[playerIdx] = slotNext;
         this._pickUp(next, e.clientX, e.clientY);
+        this._render();
       } else if (btn === 1 && this._heldItem) {
         const newCount = this._heldItem.count - 1;
+        this._playerSlots[playerIdx] = item ? { ...item, count: item.count + 1 } : { ...this._heldItem, count: 1 };
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
+        this._render();
       }
       if (this._onClickSlot) this._onClickSlot(slotIdx, btn);
     });
@@ -398,7 +412,9 @@ export class WindowScreen {
     cell.addEventListener('touchend', (e) => {
       e.preventDefault(); e.stopPropagation();
       const t = e.changedTouches[0];
+      this._playerSlots[playerIdx] = this._heldItem ? item : null;
       this._pickUp(this._heldItem ? null : item, t ? t.clientX : 0, t ? t.clientY : 0);
+      this._render();
       if (this._onClickSlot) this._onClickSlot(slotIdx, 0);
     });
     return cell;
@@ -449,22 +465,36 @@ export class WindowScreen {
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       const btn = e.button === 2 ? 1 : 0;
+      // Slot 0 of a container is always the output (craft result, furnace output) — no placing
+      const isOutput = idx === 0;
       if (btn === 0) {
         let next;
+        let slotNext = item;
         if (!this._heldItem) {
           next = item;
+          slotNext = null;
+        } else if (isOutput) {
+          next = this._heldItem;
+          slotNext = item;
         } else if (!item) {
           next = null;
+          slotNext = this._heldItem;
         } else if (this._heldItem.name === item.name) {
           const combined = this._heldItem.count + item.count;
           next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
+          slotNext = { ...item, count: Math.min(64, combined) };
         } else {
           next = item;
+          slotNext = this._heldItem;
         }
+        this._slots[idx] = slotNext;
         this._pickUp(next, e.clientX, e.clientY);
-      } else if (btn === 1 && this._heldItem) {
+        this._render();
+      } else if (btn === 1 && this._heldItem && !isOutput) {
         const newCount = this._heldItem.count - 1;
+        this._slots[idx] = item ? { ...item, count: item.count + 1 } : { ...this._heldItem, count: 1 };
         this._pickUp(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
+        this._render();
       }
       if (this._onClickSlot) this._onClickSlot(idx, btn);
     });

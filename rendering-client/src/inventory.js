@@ -307,23 +307,32 @@ export class InventoryScreen {
       const isCraftResult = idx === 0;
       if (btn === 0) {
         let next;
+        let slotNext = item; // optimistic new slot state
         if (!this._heldItem) {
-          next = item; // pick up
+          next = item;
+          slotNext = null;
         } else if (isCraftResult) {
-          next = this._heldItem; // can't place into craft result — keep held item
+          next = this._heldItem; // keep held item — can't place into craft result
+          slotNext = item;       // slot unchanged
         } else if (!item) {
-          next = null; // place onto empty slot
+          next = null;
+          slotNext = this._heldItem;
         } else if (this._heldItem.name === item.name) {
           const combined = this._heldItem.count + item.count;
           next = combined <= 64 ? null : { ...this._heldItem, count: combined - 64 };
+          slotNext = { ...item, count: Math.min(64, combined) };
         } else {
-          next = item; // swap
+          next = item;
+          slotNext = this._heldItem;
         }
+        this._slots[idx] = slotNext;
         this._pickUpItem(next, e.clientX, e.clientY);
+        this._render();
       } else if (btn === 1 && this._heldItem && !isCraftResult) {
-        // Right click: place one item from cursor — decrement held count optimistically
         const newCount = this._heldItem.count - 1;
+        this._slots[idx] = item ? { ...item, count: item.count + 1 } : { ...this._heldItem, count: 1 };
         this._pickUpItem(newCount > 0 ? { ...this._heldItem, count: newCount } : null, e.clientX, e.clientY);
+        this._render();
       }
       if (this._onClickSlot) this._onClickSlot(idx, btn);
     });
