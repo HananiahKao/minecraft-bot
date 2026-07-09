@@ -157,7 +157,10 @@ export class MinecraftRenderer {
   // Call once per frame (before render). Updates targetedBlock and highlight box.
   updateRaycast() {
     this._raycaster.setFromCamera(this._centerNDC, this.camera);
-    const meshes = Array.from(this.chunkMeshes.values());
+    const meshes = [
+      ...this.chunkMeshes.values(),
+      ...this.chunkMeshesT.values(),
+    ];
     const hits = this._raycaster.intersectObjects(meshes, false);
     if (hits.length === 0) {
       this._highlightMesh.visible = false;

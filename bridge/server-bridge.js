@@ -238,10 +238,15 @@ function initBot() {
     // Forward container slot changes — debounced so all set_slot packets in a batch settle first
     win.on('updateSlot', () => scheduleWindowUpdate(win));
     // Forward window properties (furnace burn/cook progress, etc.)
-    win.on('updateProperty', (property, value) => {
-      console.log(`[furnace prop] ${property}=${value}`);
-      broadcastMessage({ type: 'window_property', property, value });
-    });
+    // win.on('updateProperty') doesn't fire reliably in this mineflayer build.
+    // Listen to the raw packet instead (called craft_progress_bar in mc-protocol).
+    const onProp = (packet) => {
+      if (packet.windowId !== win.id) return;
+      broadcastMessage({ type: 'window_property', property: packet.property, value: packet.value });
+    };
+    bot._client.on('craft_progress_bar', onProp);
+    // Clean up when this window closes so we don't accumulate listeners
+    bot.once('windowClose', () => bot._client.removeListener('craft_progress_bar', onProp));
   });
 
   bot.on('windowClose', () => {
