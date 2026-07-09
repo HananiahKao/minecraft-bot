@@ -239,6 +239,7 @@ function initBot() {
     win.on('updateSlot', () => scheduleWindowUpdate(win));
     // Forward window properties (furnace burn/cook progress, etc.)
     win.on('updateProperty', (property, value) => {
+      console.log(`[furnace prop] ${property}=${value}`);
       broadcastMessage({ type: 'window_property', property, value });
     });
   });

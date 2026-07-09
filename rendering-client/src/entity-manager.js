@@ -22,7 +22,7 @@ const ITEM_COLORS = {
   glass: 0xc0e8f8, glass_pane: 0xc0e8f8,
   oak_sapling: 0x2d8b22, spruce_sapling: 0x1a5c1a, birch_sapling: 0x4d7d2d,
   jungle_sapling: 0x2d6b2d, acacia_sapling: 0x4d7d1a, dark_oak_sapling: 0x1a4d1a,
-  andesite: 0x8f8f8f, granite: 0x917066, diorite: 0xb3b3b3,
+  andesite: 0x8f8f8f, granite: 0x917066, diorite: 0xb3b3b3, magma_block: 0x8b3a0a,
   ladder: 0x8b6914, stripped_oak_log: 0xb8894a,
   raw_copper: 0xc87941, raw_iron: 0xa07060, raw_gold: 0xd4a030,
   egg: 0xf0e0c0, glow_ink_sac: 0x00e87a, ink_sac: 0x202020,
