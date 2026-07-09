@@ -558,14 +558,14 @@ wss.on('connection', (ws) => {
         const gm = bot.game && bot.game.gameMode;
         const canBreak = gm === 'survival' || gm === 'creative';
         if (controls.breakBlock && targetedBlock && canBreak) {
-          const key = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
-          if (!_digInProgress || key !== _digTarget) {
-            if (_digInProgress) { try { bot.stopDigging(); } catch (e) {} }
+          // Once a dig is in progress, never interrupt it due to raycaster flicker —
+          // stick with the current block until it breaks or the button is released.
+          if (!_digInProgress) {
             const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
             const block = bot.blockAt(pos);
             if (block && block.name !== 'air') {
               _digInProgress = true;
-              _digTarget = key;
+              _digTarget = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
               console.log(`⛏️  Breaking ${block.name} at ${pos}`);
               bot.dig(block)
                 .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
