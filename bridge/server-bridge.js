@@ -567,9 +567,14 @@ wss.on('connection', (ws) => {
               _digInProgress = true;
               _digTarget = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
               console.log(`⛏️  Breaking ${block.name} at ${pos}`);
-              bot.dig(block)
-                .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
-                .finally(() => { _digInProgress = false; _digTarget = null; });
+              const digPromise = bot.dig(block);
+              if (digPromise && typeof digPromise.catch === 'function') {
+                digPromise
+                  .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
+                  .finally(() => { _digInProgress = false; _digTarget = null; });
+              } else {
+                _digInProgress = false; _digTarget = null;
+              }
             }
           }
         } else if ((!controls.breakBlock || !canBreak) && _digInProgress) {
