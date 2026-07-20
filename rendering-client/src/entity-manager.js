@@ -148,7 +148,7 @@ function makeNameplate(label) {
   ctx.fillText(label, pad, canvas.height / 2);
 
   const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: true, transparent: true });
   const sprite = new THREE.Sprite(mat);
   // Scale so 1 canvas pixel ≈ 1/64 world unit (keeps text readable but not huge)
   const scale = canvas.width / 64;
