@@ -213,7 +213,16 @@ function initBot() {
     });
   });
 
+  // Throttle entity move broadcasts — mobs update at 20 tps, we only need ~10 fps for rendering.
+  // Track last-broadcast time per entity id; skip if <100ms since last send.
+  const _entityMoveTimes = new Map();
   bot.on('entityMoved', (entity) => {
+    if (!entity.name) return;
+    const now = Date.now();
+    const last = _entityMoveTimes.get(entity.id) || 0;
+    if (now - last < 100) return;
+    _entityMoveTimes.set(entity.id, now);
+
     if (entity.name === 'item') {
       broadcastMessage({
         type: 'entity_move',
@@ -222,7 +231,7 @@ function initBot() {
         y: entity.position.y,
         z: entity.position.z,
       });
-    } else if (entity.name && entity.type !== 'object') {
+    } else if (entity.type !== 'object') {
       broadcastMessage({
         type: 'entity_move',
         id: entity.id,
@@ -237,6 +246,7 @@ function initBot() {
   bot.on('entityGone', (entity) => {
     if (!entity.name) return;
     _pendingItems.delete(entity.id);
+    _entityMoveTimes.delete(entity.id);
     broadcastMessage({ type: 'entity_destroy', id: entity.id });
   });
 

@@ -94,6 +94,7 @@ const MOB_COLORS = {
   // NPCs
   villager: 0xd0a870,
   wandering_trader: 0x4060c0,
+  trader_llama: 0x8060c0,
   iron_golem: 0xc0b0a0,
   snow_golem: 0xf0f8ff,
   // Player — light blue
