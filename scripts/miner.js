@@ -56,7 +56,9 @@ const TUNNEL_HEIGHT = 3; // blocks of clearance above floor
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const log   = (...a) => console.log(`[${NAME}]`, ...a);
+const ts    = () => new Date().toTimeString().slice(0,8);
+const log   = (...a) => console.log(`[${ts()}]`, ...a);
+const pos   = (bot) => { const p = bot.entity.position; return `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})`; };
 
 const LIQUID   = new Set(['water','flowing_water','lava','flowing_lava']);
 // glass is a hole-patch marker — never dig it, so patched holes stay visible
@@ -74,50 +76,63 @@ function horizontalDanger(bot, pos) {
   return false;
 }
 
-async function digOne(bot, pos) {
-  const b = bot.blockAt(pos);
+async function digOne(bot, blockPos) {
+  const b = bot.blockAt(blockPos);
   if (!b || NO_DIG.has(b.name)) return;
-  try { await bot.dig(b); } catch(e) { log(`dig err at ${pos}: ${e.message}`); }
+  log(`  ⛏  dig ${b.name} at ${blockPos}`);
+  try { await bot.dig(b); } catch(e) { log(`  ✗ dig err at ${blockPos}: ${e.message}`); }
 }
 
-async function placeFill(bot, pos) {
+async function placeFill(bot, blockPos) {
   // Prefer glass — acts as a visible hole marker so the bot never re-digs it
   const glass = bot.inventory.items().find(i => i.name === 'glass');
   const fill  = glass ?? bot.inventory.items().find(i =>
     ['dirt','gravel','cobblestone','stone'].includes(i.name));
-  if (!fill) { log('⚠ No fill material for hole at', pos); return false; }
-  if (!glass) log(`⚠ No glass — patching with ${fill.name} at ${pos}`);
+  if (!fill) { log(`  ✗ No fill material — skipping hole at ${blockPos}`); return false; }
+  const material = fill.name;
+  if (!glass) log(`  ⚠ No glass — patching with ${material}`);
   try {
     await bot.equip(fill, 'hand');
-    const below = bot.blockAt(pos.offset(0,-1,0));
+    const below = bot.blockAt(blockPos.offset(0,-1,0));
     if (below && below.name !== 'air') {
       await bot.placeBlock(below, new Vec3(0,1,0));
+      log(`  🔳 Placed ${material} at ${blockPos}`);
       return true;
     }
-  } catch(e) { log(`place err at ${pos}: ${e.message}`); }
+    log(`  ✗ Nothing below ${blockPos} to place against`);
+  } catch(e) { log(`  ✗ place err at ${blockPos}: ${e.message}`); }
   return false;
 }
 
 async function goTo(bot, x, y, z) {
+  log(`🚶 Walking to (${x}, ${y}, ${z}) from ${pos(bot)}`);
   try { await bot.pathfinder.goto(new GoalBlock(x, y, z)); }
-  catch(e) { log(`nav fail → ${x},${y},${z}: ${e.message}`); }
+  catch(e) { log(`  ✗ nav fail → (${x},${y},${z}): ${e.message}`); }
 }
 
 async function deposit(bot) {
-  log('📦 Going to chest...');
+  const empty = bot.inventory.emptySlotCount();
+  const items = bot.inventory.items().map(i => `${i.name}×${i.count}`).join(', ');
+  log(`📦 Inventory full (${empty} slots left) — going to chest`);
+  log(`   Carrying: ${items || '(nothing)'}`);
   await goTo(bot, CHEST_X, CHEST_Y, CHEST_Z);
   try {
     const chestBlock = bot.blockAt(new Vec3(CHEST_X, CHEST_Y, CHEST_Z));
     const chest = await bot.openChest(chestBlock);
     await sleep(300);
+    let deposited = 0;
     for (const item of [...bot.inventory.items()]) {
-      if (KEEP(item.name)) continue;
-      try { await chest.deposit(item.type, null, item.count); await sleep(100); }
-      catch(_) {}
+      if (KEEP(item.name)) { log(`   keep: ${item.name}×${item.count}`); continue; }
+      try {
+        await chest.deposit(item.type, null, item.count);
+        log(`   deposited: ${item.name}×${item.count}`);
+        deposited++;
+        await sleep(100);
+      } catch(e) { log(`   ✗ deposit err (${item.name}): ${e.message}`); }
     }
     await chest.close();
-    log('✅ Deposited');
-  } catch(e) { log('chest err:', e.message); }
+    log(`✅ Deposited ${deposited} stacks — ${bot.inventory.emptySlotCount()} slots free`);
+  } catch(e) { log(`✗ chest err: ${e.message}`); }
 }
 
 function inventoryAlmostFull(bot) {
@@ -127,29 +142,50 @@ function inventoryAlmostFull(bot) {
 // ── Core: clear one column (floor at floorY, 3 blocks above) ─────────────────
 async function clearColumn(bot, x, z) {
   const floorPos = new Vec3(x, FLOOR_Y, z);
+  log(`── col (${x}, ${z})  floor=${bname(bot, floorPos)}`);
 
   // Check danger in all tunnel rows and horizontal neighbours
   for (let dy = 1; dy <= TUNNEL_HEIGHT; dy++) {
     const p = floorPos.offset(0, dy, 0);
-    if (LIQUID.has(bname(bot, p))) { log(`⚠ Liquid in tunnel at ${p} — skip`); return false; }
-    if (horizontalDanger(bot, p)) { log(`⚠ Liquid neighbour at ${p} — skip`); return false; }
+    const name = bname(bot, p);
+    if (LIQUID.has(name)) {
+      log(`  ⚠ Liquid (${name}) IN tunnel at Y=${FLOOR_Y+dy} — skipping column`);
+      return false;
+    }
+    for (const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nb = bname(bot, p.offset(dx,0,dz));
+      if (LIQUID.has(nb)) {
+        log(`  ⚠ Liquid (${nb}) NEXT TO tunnel at Y=${FLOOR_Y+dy} (${dx>0?'+X':dx<0?'-X':dz>0?'+Z':'-Z'}) — skipping column`);
+        return false;
+      }
+    }
   }
 
   // Ensure floor block exists (fill hole if cave below)
   const floorName = bname(bot, floorPos);
-  if (LIQUID.has(floorName)) { log(`⚠ Liquid floor at ${floorPos} — skip`); return false; }
+  if (LIQUID.has(floorName)) {
+    log(`  ⚠ Liquid (${floorName}) at floor — skipping column`);
+    return false;
+  }
   if (floorName === 'glass') {
-    // Already patched hole — tunnel above it is safe to clear, don't touch glass
+    log(`  🔳 Floor already glass (previously patched hole) — clearing tunnel above`);
   } else if (floorName === 'air') {
-    log(`🔳 Hole at floor ${floorPos} — patching with glass`);
+    log(`  🕳  Cave/hole below — patching floor with glass`);
     const ok = await placeFill(bot, floorPos);
     if (!ok) return false;
+  } else {
+    log(`  ✓ Floor is ${floorName}`);
   }
 
   // Dig the 3 tunnel blocks
+  let dug = 0;
   for (let dy = 1; dy <= TUNNEL_HEIGHT; dy++) {
-    await digOne(bot, floorPos.offset(0, dy, 0));
+    const p = floorPos.offset(0, dy, 0);
+    const n = bname(bot, p);
+    if (!NO_DIG.has(n)) dug++;
+    await digOne(bot, p);
   }
+  log(`  ✅ Column done — dug ${dug} block(s)`);
   return true;
 }
 
@@ -158,11 +194,15 @@ const bot = mineflayer.createBot({ host:HOST, port:PORT, username:NAME, auth:'of
 bot.loadPlugin(pathfinder);
 
 bot.once('spawn', async () => {
-  log(`Spawned at ${bot.entity.position}`);
-  log(`Mine entrance: ${ENT_X},${ENT_Y},${ENT_Z}`);
-  log(`Floor Y: ${FLOOR_Y}  (tunnels at Y=${FLOOR_Y+1}–${FLOOR_Y+TUNNEL_HEIGHT})`);
-  log(`Area: X ${X_MIN}→${X_MAX}, Z ${Z_MIN}→${Z_MAX} (${AREA_SIZE}×${AREA_SIZE})`);
-  log(`Chest: ${CHEST_X},${CHEST_Y},${CHEST_Z}`);
+  log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  log(`MinerBot starting`);
+  log(`  Spawned at   : ${pos(bot)}`);
+  log(`  Mine entrance: (${ENT_X}, ${ENT_Y}, ${ENT_Z})`);
+  log(`  Floor Y      : ${FLOOR_Y}  → tunnels at Y ${FLOOR_Y+1}–${FLOOR_Y+TUNNEL_HEIGHT}`);
+  log(`  Mining area  : X ${X_MIN}→${X_MAX},  Z ${Z_MIN}→${Z_MAX}  (${AREA_SIZE}×${AREA_SIZE} = ${AREA_SIZE*AREA_SIZE} columns)`);
+  log(`  Deposit chest: (${CHEST_X}, ${CHEST_Y}, ${CHEST_Z})`);
+  log(`  Inventory    : ${bot.inventory.emptySlotCount()} empty slots`);
+  log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
   const moves = new Movements(bot);
   moves.allowSprinting = true;
@@ -170,33 +210,35 @@ bot.once('spawn', async () => {
   bot.pathfinder.setMovements(moves);
 
   // ── Step 1: Pathfind to mine entrance ──────────────────────────────────────
-  log('🚶 Pathfinding to mine entrance...');
+  log(`\n▶ STEP 1 — Travel to mine entrance`);
   await goTo(bot, ENT_X, ENT_Y, ENT_Z);
-  log('✅ At entrance');
+  log(`✅ Arrived at entrance ${pos(bot)}`);
 
   // ── Step 2: Descend to floor level via ladder (pathfinder handles it) ──────
-  log(`⬇ Descending to floor Y=${FLOOR_Y+1}...`);
+  log(`\n▶ STEP 2 — Descend ladder to floor Y=${FLOOR_Y+1}`);
   await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
-  log(`✅ At mining level`);
+  log(`✅ At mining level ${pos(bot)}`);
 
   // ── Step 3: Snake-pattern excavation ───────────────────────────────────────
+  log(`\n▶ STEP 3 — Begin excavation`);
   let totalCleared = 0;
+  let totalSkipped = 0;
   const totalColumns = AREA_SIZE * AREA_SIZE;
 
   for (let zi = 0; zi <= Z_MAX - Z_MIN; zi++) {
     const z = Z_MIN + zi;
-    // Alternate X direction each row (snake)
     const xStart = zi % 2 === 0 ? X_MIN : X_MAX;
     const xEnd   = zi % 2 === 0 ? X_MAX : X_MIN;
     const xStep  = zi % 2 === 0 ? 1 : -1;
+    log(`\n── Row ${zi+1}/${AREA_SIZE}  Z=${z}  sweeping X ${xStart}→${xEnd}`);
 
     for (let x = xStart; x !== xEnd + xStep; x += xStep) {
-      // Walk to this column first — X-ray checks and digs require adjacency
       await goTo(bot, x, FLOOR_Y + 1, z);
 
-      // Deposit if inventory almost full, then return to current spot
       if (inventoryAlmostFull(bot)) {
+        log(`\n⚠ Inventory low (${bot.inventory.emptySlotCount()} slots) — going to deposit`);
         await deposit(bot);
+        log(`↩ Returning to work position`);
         await goTo(bot, ENT_X, ENT_Y, ENT_Z);
         await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
         await goTo(bot, x, FLOOR_Y + 1, z);
@@ -204,22 +246,28 @@ bot.once('spawn', async () => {
 
       const cleared = await clearColumn(bot, x, z);
       if (cleared) totalCleared++;
+      else totalSkipped++;
 
-      if (totalCleared % 100 === 0 && totalCleared > 0) {
-        log(`Progress: ${totalCleared}/${totalColumns} columns (${Math.round(totalCleared/totalColumns*100)}%)`);
+      const done = totalCleared + totalSkipped;
+      if (done % 50 === 0 && done > 0) {
+        const pct = Math.round(done / totalColumns * 100);
+        log(`\n📊 Progress: ${done}/${totalColumns} (${pct}%) — ${totalCleared} cleared, ${totalSkipped} skipped — ${bot.inventory.emptySlotCount()} inv slots free`);
       }
 
       await sleep(20);
     }
 
-    log(`Row Z=${z} done (${totalCleared} columns cleared so far)`);
+    const done = totalCleared + totalSkipped;
+    log(`── Row Z=${z} complete — ${totalCleared} cleared, ${totalSkipped} skipped so far (${Math.round(done/totalColumns*100)}% overall)`);
   }
 
   // ── Step 4: Final deposit and surface ────────────────────────────────────
+  log(`\n▶ STEP 4 — Wrapping up`);
+  log(`Final tally: ${totalCleared} columns cleared, ${totalSkipped} skipped`);
   if (!bot.inventory.items().every(i => KEEP(i.name))) await deposit(bot);
   log('🏁 Floor complete — climbing back to surface...');
   await goTo(bot, ENT_X, ENT_Y, ENT_Z);
-  log(`✅ Done. ${totalCleared} columns cleared on floor Y=${FLOOR_Y}.`);
+  log(`✅ Done. Floor Y=${FLOOR_Y} finished.`);
 });
 
 bot.on('error', e  => { log('error:', e.message); });
