@@ -46,13 +46,13 @@ const AREA_SIZE = parseInt(process.env.AREA_SIZE || '100');
 const AREA_CX   = parseInt(process.env.AREA_CX  || String(ENT_X));
 const AREA_CZ   = parseInt(process.env.AREA_CZ  || String(ENT_Z));
 
-// Area starts at the entrance and expands outward (+X direction).
-// The snake outer loop sweeps X slices one step at a time away from the entrance,
-// so every new column is always adjacent to already-excavated space — the bot
-// never has to pathfind through solid unexcavated stone.
+// Area starts at the entrance corner (AREA_CX, AREA_CZ) and expands +X / +Z.
+// Both the outer (X) and inner (Z) loops advance one block at a time from the
+// entrance, so every column is always adjacent to already-cleared space.
+// The bot never needs to pathfind more than 1 block at a time.
 const X_MIN = AREA_CX;
 const X_MAX = X_MIN + AREA_SIZE - 1;
-const Z_MIN = AREA_CZ - Math.floor(AREA_SIZE / 2);
+const Z_MIN = AREA_CZ;
 const Z_MAX = Z_MIN + AREA_SIZE - 1;
 
 const TUNNEL_HEIGHT = 3; // blocks of clearance above floor
