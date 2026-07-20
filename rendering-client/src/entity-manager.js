@@ -37,17 +37,107 @@ const DEFAULT_ITEM_COLOR = 0xff88ff; // magenta for unknowns — easy to spot
 
 const SIZE = 0.25; // item cube side length
 
-// Shared geometry and material for all item cubes (instancing would be overkill here)
+// Shared geometry for item cubes
 const _geo = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
 _geo.computeBoundingSphere();
+
+// Mob colors
+const MOB_COLORS = {
+  // Passive
+  pig: 0xf0a0a0,
+  cow: 0x4a3020,
+  sheep: 0xe0e0e0,
+  chicken: 0xf8f8e0,
+  rabbit: 0xc09060,
+  horse: 0x8b6330,
+  donkey: 0x7a5a30,
+  mule: 0x6a4a20,
+  wolf: 0x888888,
+  cat: 0xe0c080,
+  ocelot: 0xe0c040,
+  parrot: 0x40c040,
+  fox: 0xe06820,
+  bee: 0xf8c820,
+  goat: 0xd0c0a0,
+  axolotl: 0xff88aa,
+  frog: 0x80b840,
+  allay: 0x80c8ff,
+  sniffer: 0x4a7a50,
+  armadillo: 0xa07850,
+  camel: 0xd4aa60,
+  // Hostile
+  zombie: 0x507050,
+  skeleton: 0xe8e8e8,
+  creeper: 0x40a040,
+  spider: 0x303030,
+  enderman: 0x202020,
+  witch: 0x503070,
+  slime: 0x80c840,
+  ghast: 0xf8f8f8,
+  zombie_piglin: 0xa06050,
+  blaze: 0xffa020,
+  magma_cube: 0x882200,
+  // NPCs
+  villager: 0xd0a870,
+  iron_golem: 0xc0b0a0,
+  snow_golem: 0xf0f8ff,
+  bat: 0x303030,
+  // Player — light blue
+  player: 0x4488cc,
+};
+
+const DEFAULT_MOB_COLOR = 0xaa44aa;
+
+// Mob body dimensions [body_w, body_h, body_d, head_size] — very approximate
+const MOB_DIMS = {
+  player: [0.6, 1.5, 0.3, 0.5],
+  // quadrupeds
+  pig:    [0.9, 0.9, 0.6, 0.45],
+  cow:    [0.9, 1.2, 0.6, 0.5],
+  sheep:  [0.9, 1.1, 0.6, 0.45],
+  chicken:[0.4, 0.7, 0.4, 0.3],
+  rabbit: [0.4, 0.5, 0.4, 0.3],
+  horse:  [1.4, 1.4, 0.6, 0.6],
+  // etc. — anything not listed falls back to generic
+};
+const DEFAULT_DIMS = [0.6, 1.0, 0.6, 0.5];
+
+function makeMobMesh(mobType) {
+  const [bw, bh, bd, hs] = MOB_DIMS[mobType] || DEFAULT_DIMS;
+  const color = MOB_COLORS[mobType] ?? DEFAULT_MOB_COLOR;
+  const mat = new THREE.MeshLambertMaterial({ color });
+  const headMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(1.15) });
+
+  const group = new THREE.Group();
+
+  // Body
+  const bodyGeo = new THREE.BoxGeometry(bw, bh, bd);
+  bodyGeo.computeBoundingSphere();
+  const body = new THREE.Mesh(bodyGeo, mat);
+  body.position.y = bh / 2;
+  group.add(body);
+
+  // Head (sits on top of body)
+  const headGeo = new THREE.BoxGeometry(hs, hs, hs);
+  headGeo.computeBoundingSphere();
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.position.y = bh + hs / 2;
+  group.add(head);
+
+  return group;
+}
 
 export class EntityManager {
   constructor(scene) {
     this._scene = scene;
-    // id (number) → { mesh, itemName }
+    // id → { mesh, itemName }
     this._items = new Map();
+    // id → { group, mobType }
+    this._mobs = new Map();
     // item names that had no entry in ITEM_COLORS
     this.unknownItems = new Set();
+    // mob types that had no entry in MOB_COLORS
+    this.unknownMobs = new Set();
   }
 
   spawnItem(id, x, y, z, itemName) {
@@ -65,27 +155,64 @@ export class EntityManager {
 
   moveItem(id, x, y, z) {
     const entry = this._items.get(id);
-    if (entry) entry.mesh.position.set(x, y + 0.1, z);
+    if (!entry) return false;
+    entry.mesh.position.set(x, y + 0.1, z);
+    return true;
+  }
+
+  spawnMob(id, mobType, x, y, z, yaw) {
+    if (this._mobs.has(id)) this.destroyMob(id);
+    if (!(mobType in MOB_COLORS)) this.unknownMobs.add(mobType);
+    const group = makeMobMesh(mobType);
+    group.position.set(x, y, z);
+    group.rotation.y = yaw || 0;
+    this._scene.add(group);
+    this._mobs.set(id, { group, mobType });
+  }
+
+  moveMob(id, x, y, z, yaw) {
+    const entry = this._mobs.get(id);
+    if (!entry) return;
+    entry.group.position.set(x, y, z);
+    if (yaw != null) entry.group.rotation.y = yaw;
+  }
+
+  destroyMob(id) {
+    const entry = this._mobs.get(id);
+    if (!entry) return;
+    this._scene.remove(entry.group);
+    entry.group.traverse(obj => { if (obj.geometry) obj.geometry.dispose(); if (obj.material) obj.material.dispose(); });
+    this._mobs.delete(id);
   }
 
   destroy(id) {
-    const entry = this._items.get(id);
-    if (!entry) return;
-    this._scene.remove(entry.mesh);
-    entry.mesh.material.dispose();
-    this._items.delete(id);
+    // Try item first, then mob
+    const item = this._items.get(id);
+    if (item) {
+      this._scene.remove(item.mesh);
+      item.mesh.material.dispose();
+      this._items.delete(id);
+      return;
+    }
+    this.destroyMob(id);
   }
 
   // Call once per frame with elapsed seconds
   tick(dt) {
-    const ROT = Math.PI * 0.8 * dt; // ~0.8π rad/s
+    const ROT = Math.PI * 0.8 * dt;
     for (const { mesh } of this._items.values()) {
       mesh.rotation.y += ROT;
     }
   }
 
-  // Remove all items (e.g. on bot reconnect / dimension change)
+  // Remove all entities (e.g. on bot reconnect / dimension change)
   clear() {
-    for (const id of this._items.keys()) this.destroy(id);
+    for (const id of [...this._items.keys()]) {
+      const item = this._items.get(id);
+      this._scene.remove(item.mesh);
+      item.mesh.material.dispose();
+      this._items.delete(id);
+    }
+    for (const id of [...this._mobs.keys()]) this.destroyMob(id);
   }
 }

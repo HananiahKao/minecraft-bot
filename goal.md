@@ -40,7 +40,7 @@ Polish & visual completeness — make it feel like the official client
 - [ ] Block breaking animation (crack overlay while mining)
 - [ ] First-person hand/arm model holding held item
 - [ ] Health & hunger HUD (survival mode)
-- [ ] Entity rendering: other players, mobs
+- [x] Entity rendering: other players, mobs (colored box models — body + head)
 - [x] Inventory screen (open/close bag, move items)
 - [ ] Spectator: inside-block visual (official client shows darkness/fog, we show chunk void)
 

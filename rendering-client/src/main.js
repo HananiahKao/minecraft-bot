@@ -87,8 +87,8 @@ function init() {
     onWindowOpen,
     onWindowClose,
     onWindowUpdate,
-    (msg) => entityManager && entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName),
-    (msg) => entityManager && entityManager.moveItem(msg.id, msg.x, msg.y, msg.z),
+    (msg) => entityManager && (msg.kind === 'item' ? entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName) : entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw)),
+    (msg) => entityManager && (entityManager.moveItem(msg.id, msg.x, msg.y, msg.z) || entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw)),
     (id)  => entityManager && entityManager.destroy(id),
   );
 
@@ -463,8 +463,18 @@ function startUpdateLoop() {
         else if (msg.type === 'window_property')  { if (_windowScreen) _windowScreen.updateProperty(msg.property, msg.value); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
-        else if (msg.type === 'entity_spawn')     { if (entityManager) entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName); }
-        else if (msg.type === 'entity_move')      { if (entityManager) entityManager.moveItem(msg.id, msg.x, msg.y, msg.z); }
+        else if (msg.type === 'entity_spawn') {
+          if (entityManager) {
+            if (msg.kind === 'item') entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName);
+            else entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw);
+          }
+        }
+        else if (msg.type === 'entity_move') {
+          if (entityManager) {
+            if (!entityManager.moveItem(msg.id, msg.x, msg.y, msg.z))
+              entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw);
+          }
+        }
         else if (msg.type === 'entity_destroy')   { if (entityManager) entityManager.destroy(msg.id); }
       } catch (e) {}
     }
@@ -622,7 +632,9 @@ function updateMetrics() {
   const pendingCount = renderer ? renderer._pending.size : 0;
 
   const unknownList = Array.from(_unknownBlocks).sort();
-  const unknownEntityList = entityManager ? Array.from(entityManager.unknownItems).sort() : [];
+  const unknownEntityList = entityManager
+    ? [...new Set([...entityManager.unknownItems, ...entityManager.unknownMobs])].sort()
+    : [];
   const statsLines = [
     ['b', 'Chunk Build (worker)'],
     ['',  `avg: ${avgBuild.toFixed(1)}ms  p95: ${p95Build.toFixed(1)}ms`],
