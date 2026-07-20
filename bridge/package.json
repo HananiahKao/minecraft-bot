@@ -10,8 +10,9 @@
   },
   "dependencies": {
     "mineflayer": "^4.20.2",
-    "vec3": "^0.1.8",
+    "mineflayer-pathfinder": "^2.4.5",
     "prismarine-chunk": "^1.36.5",
+    "vec3": "^0.1.8",
     "ws": "^8.16.0"
   }
 }
