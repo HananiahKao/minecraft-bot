@@ -1,269 +1,224 @@
 #!/usr/bin/env node
 /**
- * Autonomous miner bot — strict floor-based horizontal mining.
+ * Autonomous miner — full 100×100 floor excavation.
  *
- * Rules:
- *  - Mines ONLY horizontally on each floor. Never digs the floor itself.
- *  - Before stepping to any position, checks the floor block (Y-1).
- *    If missing (cave below), fills it with dirt before proceeding.
- *  - Skips any column whose horizontal neighbors contain lava or water.
- *  - Never digs into lava or water.
- *  - Uses the bot's full chunk X-ray to look one block ahead before acting.
- *  - Each floor is 2 blocks tall (feet + head). Ceiling is never touched.
+ * Behaviour:
+ *  1. Pathfinds from spawn to the mine entrance (ladder top).
+ *  2. Descends ladder shaft to the target floor Y level.
+ *  3. Excavates the full AREA_SIZE×AREA_SIZE area in a snake pattern.
+ *     Each column is 3 blocks tall (floor block is never touched).
+ *     Before every column: X-ray-checks the floor block and 4 horizontal
+ *     neighbours — fills holes with dirt, skips lava/water.
+ *  4. When inventory has ≤ 4 empty slots, walks to the chest, deposits
+ *     everything except tools/ladders, then pathfinds back to resume.
+ *  5. Stops when the full area is cleared. Climbs back to surface.
  *
- * Usage:
- *   node scripts/miner.js
- *
- * Required env vars:
- *   MINE_ENTRANCE_X/Y/Z  Where to teleport/pathfind to start mining
- *                        Y is the FLOOR level (bot stands on this, never digs it)
- *
- * Optional env vars:
- *   MINE_DEPTH      Length of each branch tunnel   (default 20)
- *   MINE_FLOORS     Number of floors               (default 3)
- *   MC_HOST / MC_PORT / BOT_NAME
+ * Config (env vars — all optional, defaults match current mine):
+ *   ENTRANCE_X/Y/Z   Ladder top coords     (default 215 70 -281)
+ *   FLOOR_Y          Y of the floor blocks (default 51 — one floor below existing)
+ *   CHEST_X/Y/Z      Chest to deposit into (default 212 71 -286)
+ *   AREA_CX/CZ       Centre of mining area (default entrance X/Z)
+ *   AREA_SIZE        Side length in blocks (default 100)
+ *   MC_HOST/MC_PORT/BOT_NAME
  */
 
 const mineflayer = require('../bridge/node_modules/mineflayer');
-const { pathfinder, Movements, goals: { GoalBlock } } =
+const { pathfinder, Movements, goals: { GoalBlock, GoalNear } } =
   require('../bridge/node_modules/mineflayer-pathfinder');
 const Vec3 = require('../bridge/node_modules/vec3');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const MC_HOST    = process.env.MC_HOST    || 'localhost';
-const MC_PORT    = parseInt(process.env.MC_PORT    || '25565');
-const BOT_NAME   = process.env.BOT_NAME   || 'MinerBot';
+const HOST    = process.env.MC_HOST   || 'localhost';
+const PORT    = parseInt(process.env.MC_PORT   || '25565');
+const NAME    = process.env.BOT_NAME  || 'MinerBot';
 
-const ENTRANCE_X = process.env.MINE_ENTRANCE_X != null ? parseInt(process.env.MINE_ENTRANCE_X) : null;
-const ENTRANCE_Y = process.env.MINE_ENTRANCE_Y != null ? parseInt(process.env.MINE_ENTRANCE_Y) : null;
-const ENTRANCE_Z = process.env.MINE_ENTRANCE_Z != null ? parseInt(process.env.MINE_ENTRANCE_Z) : null;
+const ENT_X   = parseInt(process.env.ENTRANCE_X || '215');
+const ENT_Y   = parseInt(process.env.ENTRANCE_Y || '70');
+const ENT_Z   = parseInt(process.env.ENTRANCE_Z || '-281');
 
-const BRANCH_DEPTH   = parseInt(process.env.MINE_DEPTH  || '20');
-const FLOORS         = parseInt(process.env.MINE_FLOORS || '3');
-const BRANCH_SPACING = 4;  // main tunnel blocks between each branch pair
-const FLOOR_GAP      = 3;  // vertical distance between floors
+const FLOOR_Y = parseInt(process.env.FLOOR_Y   || '51');  // floor blocks sit here
+
+const CHEST_X = parseInt(process.env.CHEST_X   || '212');
+const CHEST_Y = parseInt(process.env.CHEST_Y   || '71');
+const CHEST_Z = parseInt(process.env.CHEST_Z   || '-286');
+
+const AREA_SIZE = parseInt(process.env.AREA_SIZE || '100');
+const AREA_CX   = parseInt(process.env.AREA_CX  || String(ENT_X));
+const AREA_CZ   = parseInt(process.env.AREA_CZ  || String(ENT_Z));
+
+// Derived area bounds
+const X_MIN = AREA_CX - Math.floor(AREA_SIZE / 2);
+const X_MAX = X_MIN + AREA_SIZE - 1;
+const Z_MIN = AREA_CZ - Math.floor(AREA_SIZE / 2);
+const Z_MAX = Z_MIN + AREA_SIZE - 1;
+
+const TUNNEL_HEIGHT = 3; // blocks of clearance above floor
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const log   = (...a) => console.log(`[${BOT_NAME}]`, ...a);
+const log   = (...a) => console.log(`[${NAME}]`, ...a);
 
-const DANGEROUS  = new Set(['lava', 'flowing_lava', 'water', 'flowing_water']);
-const NEVER_DIG  = new Set(['bedrock', 'air']);
+const LIQUID   = new Set(['water','flowing_water','lava','flowing_lava']);
+const NO_DIG   = new Set(['air','bedrock','water','flowing_water','lava','flowing_lava']);
+const KEEP     = (name) => name.includes('pickaxe') || name.includes('shovel') ||
+                            name.includes('axe') || name === 'ladder' || name === 'torch' ||
+                            name.includes('dirt') || name.includes('sword');
 
-function blockName(bot, pos) {
-  return bot.blockAt(pos)?.name ?? 'air';
-}
+function bname(bot, pos) { return bot.blockAt(pos)?.name ?? 'air'; }
 
-// Returns true if any of the 4 horizontal neighbours at pos are dangerous
 function horizontalDanger(bot, pos) {
-  for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-    const n = blockName(bot, pos.offset(dx, 0, dz));
-    if (DANGEROUS.has(n)) return true;
+  for (const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    if (LIQUID.has(bname(bot, pos.offset(dx,0,dz)))) return true;
   }
   return false;
 }
 
-async function digBlock(bot, pos) {
+async function digOne(bot, pos) {
   const b = bot.blockAt(pos);
-  if (!b || NEVER_DIG.has(b.name) || DANGEROUS.has(b.name)) return;
-  try { await bot.dig(b); } catch (e) { log(`dig failed at ${pos}: ${e.message}`); }
+  if (!b || NO_DIG.has(b.name)) return;
+  try { await bot.dig(b); } catch(e) { log(`dig err at ${pos}: ${e.message}`); }
 }
 
-// Place dirt at pos using one from inventory
-async function placeDirt(bot, pos) {
-  const dirt = bot.inventory.items().find(i =>
-    ['dirt', 'gravel', 'sand', 'cobblestone', 'stone', 'netherrack'].includes(i.name));
-  if (!dirt) { log('⚠️  No fill material — cannot patch hole at', pos); return false; }
+async function placeFill(bot, pos) {
+  const fill = bot.inventory.items().find(i =>
+    ['dirt','gravel','cobblestone','stone','sand'].includes(i.name));
+  if (!fill) { log('⚠ No fill material for hole at', pos); return false; }
   try {
-    await bot.equip(dirt, 'hand');
-    // Place on the block below (needs a reference surface)
-    const below = bot.blockAt(pos.offset(0, -1, 0));
+    await bot.equip(fill, 'hand');
+    const below = bot.blockAt(pos.offset(0,-1,0));
     if (below && below.name !== 'air') {
-      await bot.placeBlock(below, new Vec3(0, 1, 0));
+      await bot.placeBlock(below, new Vec3(0,1,0));
+      return true;
     }
-    return true;
-  } catch (e) {
-    log(`place failed at ${pos}: ${e.message}`);
-    return false;
-  }
-}
-
-// Ensure the floor block at (x, floorY, z) exists. Fill with dirt if not.
-// Returns false if unsafe to proceed (dangerous block found).
-async function ensureFloor(bot, x, floorY, z) {
-  const floorPos = new Vec3(x, floorY, z);
-  const name = blockName(bot, floorPos);
-
-  if (DANGEROUS.has(name)) {
-    log(`⚠️  Dangerous floor at ${floorPos} (${name}) — skipping column`);
-    return false;
-  }
-  if (name === 'air') {
-    log(`🧱 Patching hole at floor ${floorPos}`);
-    const ok = await placeDirt(bot, floorPos);
-    if (!ok) return false;
-  }
-  return true;
-}
-
-// Dig a 2-tall tunnel cell at (x, floorY+1, z) and (x, floorY+2, z).
-// Checks floor at floorY first. Skips if dangerous neighbours.
-// Returns true if cell was cleared.
-async function clearCell(bot, x, floorY, z) {
-  // X-ray check before touching anything
-  const feetPos = new Vec3(x, floorY + 1, z);
-  const headPos = new Vec3(x, floorY + 2, z);
-
-  // Skip if horizontal danger at either height
-  if (horizontalDanger(bot, feetPos) || horizontalDanger(bot, headPos)) {
-    log(`⚠️  Horizontal danger adjacent to ${x},${floorY+1},${z} — skipping`);
-    return false;
-  }
-
-  // Ensure floor is solid
-  const floorOk = await ensureFloor(bot, x, floorY, z);
-  if (!floorOk) return false;
-
-  // Now safe to dig the 2-tall cell
-  await digBlock(bot, feetPos);
-  await digBlock(bot, headPos);
-  return true;
+  } catch(e) { log(`place err at ${pos}: ${e.message}`); }
+  return false;
 }
 
 async function goTo(bot, x, y, z) {
-  try {
-    await bot.pathfinder.goto(new GoalBlock(x, y, z));
-  } catch (e) {
-    log(`pathfinder could not reach ${x},${y},${z}: ${e.message}`);
-  }
+  try { await bot.pathfinder.goto(new GoalBlock(x, y, z)); }
+  catch(e) { log(`nav fail → ${x},${y},${z}: ${e.message}`); }
 }
 
-// Scan nearby for a chest
-function findNearbyChest(bot) {
-  const pos = bot.entity.position;
-  for (let dx = -10; dx <= 10; dx++) {
-    for (let dy = -5; dy <= 5; dy++) {
-      for (let dz = -10; dz <= 10; dz++) {
-        const b = bot.blockAt(pos.offset(dx, dy, dz));
-        if (b && b.name === 'chest') return b.position;
-      }
-    }
-  }
-  return null;
-}
-
-async function depositToChest(bot, chestPos) {
-  log('📦 Heading to chest...');
-  await goTo(bot, chestPos.x, chestPos.y + 1, chestPos.z);
+async function deposit(bot) {
+  log('📦 Going to chest...');
+  await goTo(bot, CHEST_X, CHEST_Y, CHEST_Z);
   try {
-    const chest = await bot.openChest(bot.blockAt(chestPos));
-    const keep = new Set(['ladder', 'torch', 'dirt', 'gravel', 'pickaxe',
-      'cobblestone', 'stone', 'iron_pickaxe', 'diamond_pickaxe',
-      'golden_pickaxe', 'wooden_pickaxe', 'stone_pickaxe']);
-    for (const item of bot.inventory.items()) {
-      if ([...keep].some(k => item.name.includes(k))) continue;
-      try { await chest.deposit(item.type, null, item.count); } catch (_) {}
+    const chestBlock = bot.blockAt(new Vec3(CHEST_X, CHEST_Y, CHEST_Z));
+    const chest = await bot.openChest(chestBlock);
+    await sleep(300);
+    for (const item of [...bot.inventory.items()]) {
+      if (KEEP(item.name)) continue;
+      try { await chest.deposit(item.type, null, item.count); await sleep(100); }
+      catch(_) {}
     }
-    chest.close();
-    log('✅ Deposit done');
-  } catch (e) { log('chest error:', e.message); }
+    await chest.close();
+    log('✅ Deposited');
+  } catch(e) { log('chest err:', e.message); }
 }
 
 function inventoryAlmostFull(bot) {
   return bot.inventory.emptySlotCount() <= 4;
 }
 
+// ── Core: clear one column (floor at floorY, 3 blocks above) ─────────────────
+async function clearColumn(bot, x, z) {
+  const floorPos = new Vec3(x, FLOOR_Y, z);
+
+  // Check danger in all tunnel rows and horizontal neighbours
+  for (let dy = 1; dy <= TUNNEL_HEIGHT; dy++) {
+    const p = floorPos.offset(0, dy, 0);
+    if (LIQUID.has(bname(bot, p))) { log(`⚠ Liquid in tunnel at ${p} — skip`); return false; }
+    if (horizontalDanger(bot, p)) { log(`⚠ Liquid neighbour at ${p} — skip`); return false; }
+  }
+
+  // Ensure floor block exists (fill hole if cave below)
+  const floorName = bname(bot, floorPos);
+  if (LIQUID.has(floorName)) { log(`⚠ Liquid floor at ${floorPos} — skip`); return false; }
+  if (floorName === 'air') {
+    log(`🧱 Hole at floor ${floorPos} — patching`);
+    const ok = await placeFill(bot, floorPos);
+    if (!ok) return false;
+  }
+
+  // Dig the 3 tunnel blocks
+  for (let dy = 1; dy <= TUNNEL_HEIGHT; dy++) {
+    await digOne(bot, floorPos.offset(0, dy, 0));
+  }
+  return true;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
-const bot = mineflayer.createBot({
-  host: MC_HOST, port: MC_PORT,
-  username: BOT_NAME, auth: 'offline', version: '1.19.4',
-});
+const bot = mineflayer.createBot({ host:HOST, port:PORT, username:NAME, auth:'offline', version:'1.19.4' });
 bot.loadPlugin(pathfinder);
 
 bot.once('spawn', async () => {
-  log(`✅ Spawned at ${bot.entity.position}`);
+  log(`Spawned at ${bot.entity.position}`);
+  log(`Mine entrance: ${ENT_X},${ENT_Y},${ENT_Z}`);
+  log(`Floor Y: ${FLOOR_Y}  (tunnels at Y=${FLOOR_Y+1}–${FLOOR_Y+TUNNEL_HEIGHT})`);
+  log(`Area: X ${X_MIN}→${X_MAX}, Z ${Z_MIN}→${Z_MAX} (${AREA_SIZE}×${AREA_SIZE})`);
+  log(`Chest: ${CHEST_X},${CHEST_Y},${CHEST_Z}`);
 
   const moves = new Movements(bot);
   moves.allowSprinting = true;
   moves.canDig = true;
   bot.pathfinder.setMovements(moves);
 
-  // Determine starting floor Y
-  let startX, startFloorY, startZ;
+  // ── Step 1: Pathfind to mine entrance ──────────────────────────────────────
+  log('🚶 Pathfinding to mine entrance...');
+  await goTo(bot, ENT_X, ENT_Y, ENT_Z);
+  log('✅ At entrance');
 
-  if (ENTRANCE_X != null && ENTRANCE_Y != null && ENTRANCE_Z != null) {
-    startX      = ENTRANCE_X;
-    startFloorY = ENTRANCE_Y;  // Y of the floor blocks (bot stands one above)
-    startZ      = ENTRANCE_Z;
-    log(`Pathfinding to mine entrance at ${startX},${startFloorY},${startZ}`);
-    await goTo(bot, startX, startFloorY + 1, startZ);
-  } else {
-    // Use current position
-    const p = bot.entity.position.floored();
-    startX      = p.x;
-    startFloorY = p.y - 1;  // floor is one below feet
-    startZ      = p.z;
-    log(`No entrance given — mining from current position. Floor Y=${startFloorY}`);
-  }
+  // ── Step 2: Descend to floor level via ladder (pathfinder handles it) ──────
+  log(`⬇ Descending to floor Y=${FLOOR_Y+1}...`);
+  await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
+  log(`✅ At mining level`);
 
-  // ── Mine floors ────────────────────────────────────────────────────────────
-  for (let floor = 0; floor < FLOORS; floor++) {
-    const floorY = startFloorY - floor * FLOOR_GAP;
-    log(`\n🏗️  Floor ${floor + 1}/${FLOORS} — floor blocks at Y=${floorY}, tunnels at Y=${floorY+1}`);
+  // ── Step 3: Snake-pattern excavation ───────────────────────────────────────
+  let totalCleared = 0;
+  const totalColumns = AREA_SIZE * AREA_SIZE;
 
-    // Navigate to this floor's start
-    await goTo(bot, startX, floorY + 1, startZ);
+  for (let zi = 0; zi <= Z_MAX - Z_MIN; zi++) {
+    const z = Z_MIN + zi;
+    // Alternate X direction each row (snake)
+    const xStart = zi % 2 === 0 ? X_MIN : X_MAX;
+    const xEnd   = zi % 2 === 0 ? X_MAX : X_MIN;
+    const xStep  = zi % 2 === 0 ? 1 : -1;
 
-    // Main tunnel eastward (+X)
-    for (let step = 1; step <= BRANCH_DEPTH; step++) {
-      const mx = startX + step;
-
-      // Deposit if full
+    for (let x = xStart; x !== xEnd + xStep; x += xStep) {
+      // Deposit if inventory almost full, then return to current spot
       if (inventoryAlmostFull(bot)) {
-        const chest = findNearbyChest(bot);
-        if (chest) {
-          await depositToChest(bot, chest);
-          await goTo(bot, mx - 1, floorY + 1, startZ);
-        } else {
-          log('⚠️  Inventory almost full but no chest found nearby');
-        }
+        await deposit(bot);
+        // Return to current position after deposit
+        await goTo(bot, ENT_X, ENT_Y, ENT_Z);          // back to entrance
+        await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);    // down the ladder
+        await goTo(bot, x, FLOOR_Y + 1, z);            // back to work position
       }
 
-      // Clear this cell in the main tunnel
-      const cleared = await clearCell(bot, mx, floorY, startZ);
-      if (cleared) await goTo(bot, mx, floorY + 1, startZ);
-
-      // Branch pair every BRANCH_SPACING steps
-      if (step % BRANCH_SPACING === 0) {
-        // North branch (-Z)
-        log(`  ↑ Branch north from x=${mx}`);
-        for (let b = 1; b <= BRANCH_DEPTH; b++) {
-          await clearCell(bot, mx, floorY, startZ - b);
-          await sleep(30);
-        }
-        await goTo(bot, mx, floorY + 1, startZ);
-
-        // South branch (+Z)
-        log(`  ↓ Branch south from x=${mx}`);
-        for (let b = 1; b <= BRANCH_DEPTH; b++) {
-          await clearCell(bot, mx, floorY, startZ + b);
-          await sleep(30);
-        }
-        await goTo(bot, mx, floorY + 1, startZ);
+      const cleared = await clearColumn(bot, x, z);
+      if (cleared) {
+        totalCleared++;
+        // Move bot to cleared position
+        try { await bot.pathfinder.goto(new GoalBlock(x, FLOOR_Y + 1, z)); }
+        catch(_) {}
       }
+
+      if (totalCleared % 100 === 0 && totalCleared > 0) {
+        log(`Progress: ${totalCleared}/${totalColumns} columns (${Math.round(totalCleared/totalColumns*100)}%)`);
+      }
+
+      await sleep(20); // slight yield to avoid CPU spike
     }
 
-    log(`✅ Floor ${floor + 1} done`);
+    log(`Row Z=${z} done (${totalCleared} columns cleared so far)`);
   }
 
-  // Final deposit and return
-  const chest = findNearbyChest(bot);
-  if (chest) await depositToChest(bot, chest);
-
-  await goTo(bot, startX, startFloorY + 1, startZ);
-  log('🏁 All floors mined. Returned to entrance.');
+  // ── Step 4: Final deposit and surface ────────────────────────────────────
+  if (!bot.inventory.items().every(i => KEEP(i.name))) await deposit(bot);
+  log('🏁 Floor complete — climbing back to surface...');
+  await goTo(bot, ENT_X, ENT_Y, ENT_Z);
+  log(`✅ Done. ${totalCleared} columns cleared on floor Y=${FLOOR_Y}.`);
 });
 
-bot.on('error', e  => log('error:', e.message));
+bot.on('error', e  => { log('error:', e.message); });
 bot.on('end',   () => { log('disconnected'); process.exit(0); });
 process.on('SIGINT', () => { bot.quit(); setTimeout(() => process.exit(0), 500); });
