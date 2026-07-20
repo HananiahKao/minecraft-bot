@@ -77,11 +77,25 @@ const MOB_COLORS = {
   zombie_piglin: 0xa06050,
   blaze: 0xffa020,
   magma_cube: 0x882200,
+  // Aquatic
+  cod: 0xe0b060,
+  salmon: 0xe06040,
+  tropical_fish: 0xff8820,
+  pufferfish: 0xe0c020,
+  squid: 0x607080,
+  glow_squid: 0x20d0b0,
+  dolphin: 0x607090,
+  turtle: 0x40a060,
+  guardian: 0x50a080,
+  elder_guardian: 0x80c0a0,
+  drowned: 0x407060,
+  // Ambient
+  bat: 0x303030,
   // NPCs
   villager: 0xd0a870,
+  wandering_trader: 0x4060c0,
   iron_golem: 0xc0b0a0,
   snow_golem: 0xf0f8ff,
-  bat: 0x303030,
   // Player — light blue
   player: 0x4488cc,
 };
@@ -98,6 +112,16 @@ const MOB_DIMS = {
   chicken:[0.4, 0.7, 0.4, 0.3],
   rabbit: [0.4, 0.5, 0.4, 0.3],
   horse:  [1.4, 1.4, 0.6, 0.6],
+  // Aquatic / small
+  cod:           [0.5, 0.3, 0.2, 0.0],
+  salmon:        [0.7, 0.35, 0.2, 0.0],
+  tropical_fish: [0.4, 0.3, 0.15, 0.0],
+  pufferfish:    [0.4, 0.4, 0.4, 0.0],
+  squid:         [0.8, 0.8, 0.8, 0.0],
+  glow_squid:    [0.8, 0.8, 0.8, 0.0],
+  dolphin:       [0.9, 0.5, 0.5, 0.0],
+  turtle:        [1.2, 0.4, 1.2, 0.0],
+  bat:           [0.3, 0.3, 0.3, 0.0],
   // etc. — anything not listed falls back to generic
 };
 const DEFAULT_DIMS = [0.6, 1.0, 0.6, 0.5];
@@ -106,23 +130,25 @@ function makeMobMesh(mobType) {
   const [bw, bh, bd, hs] = MOB_DIMS[mobType] || DEFAULT_DIMS;
   const color = MOB_COLORS[mobType] ?? DEFAULT_MOB_COLOR;
   const mat = new THREE.MeshLambertMaterial({ color });
-  const headMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(1.15) });
 
   const group = new THREE.Group();
 
-  // Body
   const bodyGeo = new THREE.BoxGeometry(bw, bh, bd);
   bodyGeo.computeBoundingSphere();
   const body = new THREE.Mesh(bodyGeo, mat);
   body.position.y = bh / 2;
   group.add(body);
 
-  // Head (sits on top of body)
-  const headGeo = new THREE.BoxGeometry(hs, hs, hs);
-  headGeo.computeBoundingSphere();
-  const head = new THREE.Mesh(headGeo, headMat);
-  head.position.y = bh + hs / 2;
-  group.add(head);
+  if (hs > 0) {
+    // Head sits on top of body, slightly brighter
+    const headColor = new THREE.Color(color).multiplyScalar(1.15);
+    const headMat = new THREE.MeshLambertMaterial({ color: headColor });
+    const headGeo = new THREE.BoxGeometry(hs, hs, hs);
+    headGeo.computeBoundingSphere();
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = bh + hs / 2;
+    group.add(head);
+  }
 
   return group;
 }

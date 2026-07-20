@@ -197,26 +197,15 @@ function initBot() {
     });
   });
 
-  // Mob/player entities — spawn immediately (no metadata needed for basic rendering)
-  const MOB_KINDS = new Set([
-    'player',
-    'pig', 'cow', 'sheep', 'chicken', 'rabbit', 'horse', 'donkey', 'mule',
-    'wolf', 'cat', 'ocelot', 'parrot', 'fox', 'bee', 'goat', 'axolotl',
-    'frog', 'allay', 'sniffer', 'armadillo', 'camel',
-    'zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch',
-    'slime', 'ghast', 'zombie_piglin', 'blaze', 'magma_cube',
-    'villager', 'iron_golem', 'snow_golem', 'bat',
-  ]);
-
+  // All living entities (mobs, players) — spawn immediately, no metadata needed
   bot.on('entitySpawn', (entity) => {
     if (entity.name === 'item') return; // handled separately via metadata
-    if (!MOB_KINDS.has(entity.name)) return;
+    if (!entity.name || entity.type === 'object') return; // skip non-living objects
     broadcastMessage({
       type: 'entity_spawn',
       id: entity.id,
       kind: entity.type === 'player' ? 'player' : 'mob',
       mobType: entity.name,
-      username: entity.username || null,
       x: entity.position.x,
       y: entity.position.y,
       z: entity.position.z,
@@ -233,7 +222,7 @@ function initBot() {
         y: entity.position.y,
         z: entity.position.z,
       });
-    } else if (MOB_KINDS.has(entity.name)) {
+    } else if (entity.name && entity.type !== 'object') {
       broadcastMessage({
         type: 'entity_move',
         id: entity.id,
@@ -246,7 +235,7 @@ function initBot() {
   });
 
   bot.on('entityGone', (entity) => {
-    if (entity.name !== 'item' && !MOB_KINDS.has(entity.name)) return;
+    if (!entity.name) return;
     _pendingItems.delete(entity.id);
     broadcastMessage({ type: 'entity_destroy', id: entity.id });
   });
