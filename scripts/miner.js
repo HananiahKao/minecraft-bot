@@ -46,8 +46,11 @@ const AREA_SIZE = parseInt(process.env.AREA_SIZE || '100');
 const AREA_CX   = parseInt(process.env.AREA_CX  || String(ENT_X));
 const AREA_CZ   = parseInt(process.env.AREA_CZ  || String(ENT_Z));
 
-// Derived area bounds
-const X_MIN = AREA_CX - Math.floor(AREA_SIZE / 2);
+// Area starts at the entrance and expands outward (+X direction).
+// The snake outer loop sweeps X slices one step at a time away from the entrance,
+// so every new column is always adjacent to already-excavated space — the bot
+// never has to pathfind through solid unexcavated stone.
+const X_MIN = AREA_CX;
 const X_MAX = X_MIN + AREA_SIZE - 1;
 const Z_MIN = AREA_CZ - Math.floor(AREA_SIZE / 2);
 const Z_MAX = Z_MIN + AREA_SIZE - 1;
@@ -107,7 +110,12 @@ async function placeFill(bot, blockPos) {
 async function goTo(bot, x, y, z) {
   log(`🚶 Walking to (${x}, ${y}, ${z}) from ${pos(bot)}`);
   try { await bot.pathfinder.goto(new GoalBlock(x, y, z)); }
-  catch(e) { log(`  ✗ nav fail → (${x},${y},${z}): ${e.message}`); }
+  catch(e) {
+    log(`  ✗ nav fail → (${x},${y},${z}): ${e.message}`);
+    log(`  ✗ Bot is at ${pos(bot)} after failure`);
+    return false;
+  }
+  return true;
 }
 
 async function deposit(bot) {
@@ -220,20 +228,29 @@ bot.once('spawn', async () => {
   log(`✅ At mining level ${pos(bot)}`);
 
   // ── Step 3: Snake-pattern excavation ───────────────────────────────────────
+  // Outer loop: X slices starting at the entrance and advancing outward (+X).
+  // Each new X-slice is adjacent to the previously cleared one, so the bot
+  // always walks into open space — never needs to path through solid stone.
+  // Inner loop: Z rows snaking back and forth within each X-slice.
   log(`\n▶ STEP 3 — Begin excavation`);
   let totalCleared = 0;
   let totalSkipped = 0;
   const totalColumns = AREA_SIZE * AREA_SIZE;
 
-  for (let zi = 0; zi <= Z_MAX - Z_MIN; zi++) {
-    const z = Z_MIN + zi;
-    const xStart = zi % 2 === 0 ? X_MIN : X_MAX;
-    const xEnd   = zi % 2 === 0 ? X_MAX : X_MIN;
-    const xStep  = zi % 2 === 0 ? 1 : -1;
-    log(`\n── Row ${zi+1}/${AREA_SIZE}  Z=${z}  sweeping X ${xStart}→${xEnd}`);
+  for (let xi = 0; xi <= X_MAX - X_MIN; xi++) {
+    const x = X_MIN + xi;
+    const zStart = xi % 2 === 0 ? Z_MIN : Z_MAX;
+    const zEnd   = xi % 2 === 0 ? Z_MAX : Z_MIN;
+    const zStep  = xi % 2 === 0 ? 1 : -1;
+    log(`\n── Slice ${xi+1}/${AREA_SIZE}  X=${x}  sweeping Z ${zStart}→${zEnd}`);
 
-    for (let x = xStart; x !== xEnd + xStep; x += xStep) {
-      await goTo(bot, x, FLOOR_Y + 1, z);
+    for (let z = zStart; z !== zEnd + zStep; z += zStep) {
+      const arrived = await goTo(bot, x, FLOOR_Y + 1, z);
+      if (!arrived) {
+        log(`  ✗ Could not reach (${x}, ${FLOOR_Y+1}, ${z}) — skipping`);
+        totalSkipped++;
+        continue;
+      }
 
       if (inventoryAlmostFull(bot)) {
         log(`\n⚠ Inventory low (${bot.inventory.emptySlotCount()} slots) — going to deposit`);
@@ -258,7 +275,7 @@ bot.once('spawn', async () => {
     }
 
     const done = totalCleared + totalSkipped;
-    log(`── Row Z=${z} complete — ${totalCleared} cleared, ${totalSkipped} skipped so far (${Math.round(done/totalColumns*100)}% overall)`);
+    log(`── Slice X=${x} complete — ${totalCleared} cleared, ${totalSkipped} skipped so far (${Math.round(done/totalColumns*100)}% overall)`);
   }
 
   // ── Step 4: Final deposit and surface ────────────────────────────────────
