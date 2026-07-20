@@ -183,9 +183,11 @@ function makeMobMesh(mobType) {
   }
 
   // Nameplate floats 0.3 blocks above the top of the model
-  const nameplate = makeNameplate(mobType.replace(/_/g, ' '));
-  nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
-  group.add(nameplate);
+  if (mobType) {
+    const nameplate = makeNameplate(mobType.replace(/_/g, ' '));
+    nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
+    group.add(nameplate);
+  }
 
   return group;
 }
