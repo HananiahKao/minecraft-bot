@@ -126,6 +126,35 @@ const MOB_DIMS = {
 };
 const DEFAULT_DIMS = [0.6, 1.0, 0.6, 0.5];
 
+function makeNameplate(label) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const font = 'bold 24px sans-serif';
+  ctx.font = font;
+  const textW = ctx.measureText(label).width;
+  const pad = 8;
+  canvas.width = textW + pad * 2;
+  canvas.height = 36;
+  // Background pill
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, canvas.width, canvas.height, 6);
+  ctx.fill();
+  // Text
+  ctx.font = font;
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, pad, canvas.height / 2);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  // Scale so 1 canvas pixel ≈ 1/64 world unit (keeps text readable but not huge)
+  const scale = canvas.width / 64;
+  sprite.scale.set(scale, canvas.height / 64, 1);
+  return sprite;
+}
+
 function makeMobMesh(mobType) {
   const [bw, bh, bd, hs] = MOB_DIMS[mobType] || DEFAULT_DIMS;
   const color = MOB_COLORS[mobType] ?? DEFAULT_MOB_COLOR;
@@ -139,6 +168,7 @@ function makeMobMesh(mobType) {
   body.position.y = bh / 2;
   group.add(body);
 
+  let topY = bh;
   if (hs > 0) {
     // Head sits on top of body, slightly brighter
     const headColor = new THREE.Color(color).multiplyScalar(1.15);
@@ -148,7 +178,13 @@ function makeMobMesh(mobType) {
     const head = new THREE.Mesh(headGeo, headMat);
     head.position.y = bh + hs / 2;
     group.add(head);
+    topY = bh + hs;
   }
+
+  // Nameplate floats 0.3 blocks above the top of the model
+  const nameplate = makeNameplate(mobType.replace(/_/g, ' '));
+  nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
+  group.add(nameplate);
 
   return group;
 }
@@ -207,7 +243,13 @@ export class EntityManager {
     const entry = this._mobs.get(id);
     if (!entry) return;
     this._scene.remove(entry.group);
-    entry.group.traverse(obj => { if (obj.geometry) obj.geometry.dispose(); if (obj.material) obj.material.dispose(); });
+    entry.group.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (obj.material.map) obj.material.map.dispose();
+        obj.material.dispose();
+      }
+    });
     this._mobs.delete(id);
   }
 
