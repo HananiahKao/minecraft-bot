@@ -44,6 +44,34 @@ Polish & visual completeness — make it feel like the official client
 - [x] Inventory screen (open/close bag, move items)
 - [ ] Spectator: inside-block visual (official client shows darkness/fog, we show chunk void)
 
+### Phase 5
+Autonomous worker bots — separate agent processes that connect to the same bridge server as additional named bots, each appearing as a distinct player entity in the world.
+
+**Architecture**
+- Bridge server refactored to support multiple simultaneous bot connections (one per named identity)
+- Each bot is an independent Mineflayer instance registered with the bridge under a name (e.g. `woodcutter`, `porter`)
+- Rendering client can switch spectator view to any bot — camera locks to that bot's position/yaw/pitch
+- Worker bots expose a task API over WebSocket so the CLI tool or an AI agent can issue jobs
+
+**Worker tasks (planned)**
+- [ ] Tree chopper: watches saplings planted by the player, waits for growth, fells the tree, collects logs
+- [ ] Porter: moves items from a designated drop zone into labeled chests
+- [ ] Farmer: plants, tends, and harvests crops in a designated area
+
+**AI agent integration**
+- Separate CLI tool (`bot-agent`) that connects to the bridge and issues task commands
+- Uses a local Ollama endpoint (no API key required) for natural-language task planning
+- Agent decides which worker bot to assign, breaks the goal into primitive bridge commands
+- Fallback: hand-coded task scripts usable without any LLM
+
+**Spectator mode**
+- [ ] Bridge refactor: multi-bot support, named bot registry
+- [ ] Rendering client: bot selector UI (switch which bot's POV you see)
+- [ ] Worker bot scaffold: connect, navigate, interact loop
+- [ ] Tree chopper implementation
+- [ ] Porter implementation
+- [ ] Ollama task-planning integration (optional, requires local Ollama install)
+
 ## "Fully Playable" Definition
 Everything the official client offers that applies to the current gamemode:
 - Viewing/exploring (all modes) ✅
