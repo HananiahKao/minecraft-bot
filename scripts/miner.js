@@ -59,10 +59,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log   = (...a) => console.log(`[${NAME}]`, ...a);
 
 const LIQUID   = new Set(['water','flowing_water','lava','flowing_lava']);
-const NO_DIG   = new Set(['air','bedrock','water','flowing_water','lava','flowing_lava']);
+// glass is a hole-patch marker — never dig it, so patched holes stay visible
+const NO_DIG   = new Set(['air','bedrock','water','flowing_water','lava','flowing_lava','glass']);
 const KEEP     = (name) => name.includes('pickaxe') || name.includes('shovel') ||
                             name.includes('axe') || name === 'ladder' || name === 'torch' ||
-                            name.includes('dirt') || name.includes('sword');
+                            name === 'glass' || name.includes('sword');
 
 function bname(bot, pos) { return bot.blockAt(pos)?.name ?? 'air'; }
 
@@ -80,9 +81,12 @@ async function digOne(bot, pos) {
 }
 
 async function placeFill(bot, pos) {
-  const fill = bot.inventory.items().find(i =>
-    ['dirt','gravel','cobblestone','stone','sand'].includes(i.name));
+  // Prefer glass — acts as a visible hole marker so the bot never re-digs it
+  const glass = bot.inventory.items().find(i => i.name === 'glass');
+  const fill  = glass ?? bot.inventory.items().find(i =>
+    ['dirt','gravel','cobblestone','stone'].includes(i.name));
   if (!fill) { log('⚠ No fill material for hole at', pos); return false; }
+  if (!glass) log(`⚠ No glass — patching with ${fill.name} at ${pos}`);
   try {
     await bot.equip(fill, 'hand');
     const below = bot.blockAt(pos.offset(0,-1,0));
@@ -134,8 +138,10 @@ async function clearColumn(bot, x, z) {
   // Ensure floor block exists (fill hole if cave below)
   const floorName = bname(bot, floorPos);
   if (LIQUID.has(floorName)) { log(`⚠ Liquid floor at ${floorPos} — skip`); return false; }
-  if (floorName === 'air') {
-    log(`🧱 Hole at floor ${floorPos} — patching`);
+  if (floorName === 'glass') {
+    // Already patched hole — tunnel above it is safe to clear, don't touch glass
+  } else if (floorName === 'air') {
+    log(`🔳 Hole at floor ${floorPos} — patching with glass`);
     const ok = await placeFill(bot, floorPos);
     if (!ok) return false;
   }
@@ -185,28 +191,25 @@ bot.once('spawn', async () => {
     const xStep  = zi % 2 === 0 ? 1 : -1;
 
     for (let x = xStart; x !== xEnd + xStep; x += xStep) {
+      // Walk to this column first — X-ray checks and digs require adjacency
+      await goTo(bot, x, FLOOR_Y + 1, z);
+
       // Deposit if inventory almost full, then return to current spot
       if (inventoryAlmostFull(bot)) {
         await deposit(bot);
-        // Return to current position after deposit
-        await goTo(bot, ENT_X, ENT_Y, ENT_Z);          // back to entrance
-        await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);    // down the ladder
-        await goTo(bot, x, FLOOR_Y + 1, z);            // back to work position
+        await goTo(bot, ENT_X, ENT_Y, ENT_Z);
+        await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
+        await goTo(bot, x, FLOOR_Y + 1, z);
       }
 
       const cleared = await clearColumn(bot, x, z);
-      if (cleared) {
-        totalCleared++;
-        // Move bot to cleared position
-        try { await bot.pathfinder.goto(new GoalBlock(x, FLOOR_Y + 1, z)); }
-        catch(_) {}
-      }
+      if (cleared) totalCleared++;
 
       if (totalCleared % 100 === 0 && totalCleared > 0) {
         log(`Progress: ${totalCleared}/${totalColumns} columns (${Math.round(totalCleared/totalColumns*100)}%)`);
       }
 
-      await sleep(20); // slight yield to avoid CPU spike
+      await sleep(20);
     }
 
     log(`Row Z=${z} done (${totalCleared} columns cleared so far)`);
