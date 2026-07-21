@@ -212,12 +212,15 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
   // Track which block IDs are transparent/non-occluding for culling
   const transparentIds = new Set();
   const nonOccludingIds = new Set();
-  for (const { x, y, z, name } of blocks) {
+  // Props (e.g. facing) for directional blocks — key is "x,y,z"
+  const blockPropsMap = new Map();
+  for (const { x, y, z, name, props } of blocks) {
     let id = nameIndex.get(name);
     if (id === undefined) { id = nameList.length; nameList.push(name); nameIndex.set(name, id); }
     if (TRANSPARENT_BLOCKS.has(name)) transparentIds.add(id);
     if (NON_OCCLUDING_BLOCKS.has(name)) nonOccludingIds.add(id);
     grid[x + z * 16 + (y - yMin) * 16 * 16] = id;
+    if (props) blockPropsMap.set(`${x},${y},${z}`, props);
   }
 
   const positions = [];      // opaque geometry
@@ -391,6 +394,48 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
         X,Y0,Z0, X,Y0,Z0+w, X,Y0+h,Z0+w,
         X,Y0,Z0, X,Y0+h,Z0+w, X,Y0+h,Z0);
     });
+  }
+
+  // ── Ladder panel pass ──────────────────────────────────────────────────────
+  // Ladders are non-occluding (excluded from greedy mesh) so we render them
+  // here as a thin quad panel flush against the wall they're attached to.
+  // facing=north → panel at Z face (south player view), etc.
+  const LADDER_COLOR = getBlockRGB('ladder');
+  const [lr, lg, lb] = LADDER_COLOR;
+  const T = 0.075; // panel thickness in blocks
+  for (const { x, y, z, name } of blocks) {
+    if (name !== 'ladder') continue;
+    const props = blockPropsMap.get(`${x},${y},${z}`) || {};
+    const facing = props.facing || 'north';
+    const wx = bxBase + x, wy = y, wz = bzBase + z;
+    // Two quads — front face (outward) and back face (against wall).
+    // Minecraft: +Z = south, -Z = north, +X = east, -X = west
+    let quads;
+    if (facing === 'north') {
+      // Panel flush with north face (z=wy), outward normal = -Z
+      quads = [
+        { nx:0,ny:0,nz:-1, v:[ wx,wy,wz+T, wx+1,wy,wz+T, wx+1,wy+1,wz+T, wx,wy,wz+T, wx+1,wy+1,wz+T, wx,wy+1,wz+T ] },
+        { nx:0,ny:0,nz: 1, v:[ wx+1,wy,wz, wx,wy,wz, wx,wy+1,wz, wx+1,wy,wz, wx,wy+1,wz, wx+1,wy+1,wz ] },
+      ];
+    } else if (facing === 'south') {
+      quads = [
+        { nx:0,ny:0,nz: 1, v:[ wx+1,wy,wz+1-T, wx,wy,wz+1-T, wx,wy+1,wz+1-T, wx+1,wy,wz+1-T, wx,wy+1,wz+1-T, wx+1,wy+1,wz+1-T ] },
+        { nx:0,ny:0,nz:-1, v:[ wx,wy,wz+1, wx+1,wy,wz+1, wx+1,wy+1,wz+1, wx,wy,wz+1, wx+1,wy+1,wz+1, wx,wy+1,wz+1 ] },
+      ];
+    } else if (facing === 'east') {
+      quads = [
+        { nx: 1,ny:0,nz:0, v:[ wx+1-T,wy,wz+1, wx+1-T,wy,wz, wx+1-T,wy+1,wz, wx+1-T,wy,wz+1, wx+1-T,wy+1,wz, wx+1-T,wy+1,wz+1 ] },
+        { nx:-1,ny:0,nz:0, v:[ wx+1,wy,wz, wx+1,wy,wz+1, wx+1,wy+1,wz+1, wx+1,wy,wz, wx+1,wy+1,wz+1, wx+1,wy+1,wz ] },
+      ];
+    } else { // west
+      quads = [
+        { nx:-1,ny:0,nz:0, v:[ wx+T,wy,wz, wx+T,wy,wz+1, wx+T,wy+1,wz+1, wx+T,wy,wz, wx+T,wy+1,wz+1, wx+T,wy+1,wz ] },
+        { nx: 1,ny:0,nz:0, v:[ wx,wy,wz+1, wx,wy,wz, wx,wy+1,wz, wx,wy,wz+1, wx,wy+1,wz, wx,wy+1,wz+1 ] },
+      ];
+    }
+    for (const { nx, ny, nz, v } of quads) {
+      pushFace(false, nx,ny,nz, lr,lg,lb, v[0],v[1],v[2], v[3],v[4],v[5], v[6],v[7],v[8], v[9],v[10],v[11], v[12],v[13],v[14], v[15],v[16],v[17]);
+    }
   }
 
   if (positions.length === 0 && tPositions.length === 0) return null;

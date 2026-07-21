@@ -443,7 +443,12 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
           try {
             const block = chunkData.getBlock({ x, y, z });
             if (block && block.name && block.name !== 'air') {
-              blocks.push({ x, y, z, name: String(block.name) });
+              const entry = { x, y, z, name: String(block.name) };
+              // Include block state properties for directional blocks (ladders, etc.)
+              if (block.properties && Object.keys(block.properties).length > 0) {
+                entry.props = block.properties;
+              }
+              blocks.push(entry);
             }
           } catch (e) {}
         }
