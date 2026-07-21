@@ -262,18 +262,23 @@ bot.once('spawn', async () => {
         await goTo(bot, x, FLOOR_Y + 1, z - zStep); // last cleared column
       }
 
-      // Dig the column first (bot can reach 1 block ahead without moving),
-      // then step into the cleared air — never pathfind into solid stone.
+      // Dig the column first (bot reaches 1 block ahead without moving),
+      // then step into the cleared air. Never pathfind into solid stone.
+      // If the column is skipped (danger/hole), stay put — don't step in.
       const cleared = await clearColumn(bot, x, z);
       if (cleared) {
         totalCleared++;
-        // Now the space is air — walk in (trivial 1-step)
-        const arrived = await goTo(bot, x, FLOOR_Y + 1, z);
-        if (!arrived) log(`  ⚠ Could not step into cleared column (${x}, ${z})`);
+        await goTo(bot, x, FLOOR_Y + 1, z);
+        // Safety: if we fell, climb back before continuing
+        const curY = Math.floor(bot.entity.position.y);
+        if (curY < FLOOR_Y) {
+          log(`  ⚠ Fell to Y=${curY} — climbing back to entrance`);
+          await goTo(bot, ENT_X, ENT_Y, ENT_Z);
+          await goTo(bot, x, FLOOR_Y + 1, z);
+        }
       } else {
         totalSkipped++;
-        // Still need to move forward past skipped columns
-        await goTo(bot, x, FLOOR_Y + 1, z);
+        // Don't move — stay at current position and try next column
       }
 
       const done = totalCleared + totalSkipped;
