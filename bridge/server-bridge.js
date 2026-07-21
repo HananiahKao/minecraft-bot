@@ -445,8 +445,10 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
             if (block && block.name && block.name !== 'air') {
               const entry = { x, y, z, name: String(block.name) };
               // Include block state properties for directional blocks (ladders, etc.)
-              if (block.properties && Object.keys(block.properties).length > 0) {
-                entry.props = block.properties;
+              // mineflayer exposes state as _properties (block.properties is undefined)
+              const props = block._properties;
+              if (props && Object.keys(props).length > 0) {
+                entry.props = props;
               }
               blocks.push(entry);
             }
