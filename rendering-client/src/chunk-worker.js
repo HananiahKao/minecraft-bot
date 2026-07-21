@@ -101,7 +101,7 @@ const BLOCK_COLORS = {
   jungle_pressure_plate: 0x7a5c2b,
   // misc blocks seen in the wild
   cobweb: 0xd0d0d0,
-  chain: 0x4a4a5a,
+  chain: 0x4a4a5a, iron_bars: 0xb8b8b8,
   rail: 0x8b7355, powered_rail: 0x8b7355, detector_rail: 0x8b7355, activator_rail: 0x8b7355,
   // crops & plants
   wheat: 0xd4a820, carrots: 0xff8c00, potatoes: 0xd4b460,
