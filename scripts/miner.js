@@ -36,7 +36,7 @@ const ENT_X   = parseInt(process.env.ENTRANCE_X || '215');
 const ENT_Y   = parseInt(process.env.ENTRANCE_Y || '70');
 const ENT_Z   = parseInt(process.env.ENTRANCE_Z || '-281');
 
-const FLOOR_Y = parseInt(process.env.FLOOR_Y   || '51');  // floor blocks sit here
+const FLOOR_Y = parseInt(process.env.FLOOR_Y   || '54');  // existing mine floor; tunnel is FLOOR_Y+1 to FLOOR_Y+3
 
 const CHEST_X = parseInt(process.env.CHEST_X   || '212');
 const CHEST_Y = parseInt(process.env.CHEST_Y   || '71');
