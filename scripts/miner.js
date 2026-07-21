@@ -245,9 +245,24 @@ bot.once('spawn', async () => {
     log(`\n── Slice ${xi+1}/${AREA_SIZE}  X=${x}  sweeping Z ${zStart}→${zEnd}`);
 
     for (let z = zStart; z !== zEnd + zStep; z += zStep) {
+      // Never dig the entrance shaft — it's the only way in/out
+      if (x === ENT_X && z === ENT_Z) {
+        log(`  ⚠ Skipping entrance shaft column (${x}, ${z})`);
+        totalSkipped++;
+        continue;
+      }
+
       const arrived = await goTo(bot, x, FLOOR_Y + 1, z);
       if (!arrived) {
         log(`  ✗ Could not reach (${x}, ${FLOOR_Y+1}, ${z}) — skipping`);
+        totalSkipped++;
+        continue;
+      }
+
+      // Safety check — if we ended up at the wrong Y, don't dig
+      const botY = Math.floor(bot.entity.position.y);
+      if (botY < FLOOR_Y || botY > FLOOR_Y + TUNNEL_HEIGHT) {
+        log(`  ✗ Bot at wrong Y=${botY} (expected ${FLOOR_Y+1}–${FLOOR_Y+TUNNEL_HEIGHT}) — skipping column`);
         totalSkipped++;
         continue;
       }
