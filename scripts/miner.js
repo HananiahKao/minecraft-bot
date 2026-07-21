@@ -86,24 +86,34 @@ async function digOne(bot, blockPos) {
   try { await bot.dig(b); } catch(e) { log(`  ✗ dig err at ${blockPos}: ${e.message}`); }
 }
 
-async function placeFill(bot, blockPos) {
-  // Prefer glass — acts as a visible hole marker so the bot never re-digs it
+// Place a fill block at floorPos (Y=FLOOR_Y) by clicking the bottom face of
+// the solid block at floorPos+1 (which is still undig at call time).
+// This works even over deep caves — no need for a solid block below.
+async function placeFill(bot, floorPos) {
   const glass = bot.inventory.items().find(i => i.name === 'glass');
   const fill  = glass ?? bot.inventory.items().find(i =>
-    ['dirt','gravel','cobblestone','stone'].includes(i.name));
-  if (!fill) { log(`  ✗ No fill material — skipping hole at ${blockPos}`); return false; }
-  const material = fill.name;
-  if (!glass) log(`  ⚠ No glass — patching with ${material}`);
+    ['dirt','cobblestone','stone','gravel'].includes(i.name));
+  if (!fill) { log(`  ✗ No fill material — cannot patch hole at ${floorPos}`); return false; }
+  if (!glass) log(`  ⚠ No glass — patching with ${fill.name}`);
   try {
     await bot.equip(fill, 'hand');
-    const below = bot.blockAt(blockPos.offset(0,-1,0));
-    if (below && below.name !== 'air') {
-      await bot.placeBlock(below, new Vec3(0,1,0));
-      log(`  🔳 Placed ${material} at ${blockPos}`);
+    // The block at floorPos+1 (Y=FLOOR_Y+1) is still solid here — click its
+    // bottom face to place the fill block at floorPos (Y=FLOOR_Y).
+    const blockAbove = bot.blockAt(floorPos.offset(0, 1, 0));
+    if (blockAbove && !NO_DIG.has(blockAbove.name) && blockAbove.name !== 'air') {
+      await bot.placeBlock(blockAbove, new Vec3(0, -1, 0));
+      log(`  🔳 Placed ${fill.name} at ${floorPos} (clicked bottom of ${blockAbove.name} above)`);
       return true;
     }
-    log(`  ✗ Nothing below ${blockPos} to place against`);
-  } catch(e) { log(`  ✗ place err at ${blockPos}: ${e.message}`); }
+    // Fallback: try placing on top of block below
+    const blockBelow = bot.blockAt(floorPos.offset(0, -1, 0));
+    if (blockBelow && blockBelow.name !== 'air') {
+      await bot.placeBlock(blockBelow, new Vec3(0, 1, 0));
+      log(`  🔳 Placed ${fill.name} at ${floorPos} (clicked top of ${blockBelow.name} below)`);
+      return true;
+    }
+    log(`  ✗ No surface to place against at ${floorPos}`);
+  } catch(e) { log(`  ✗ place err at ${floorPos}: ${e.message}`); }
   return false;
 }
 
@@ -169,16 +179,18 @@ async function clearColumn(bot, x, z) {
     }
   }
 
-  // Ensure floor block exists (fill hole if cave below)
+  // Ensure floor block exists BEFORE digging the tunnel above it.
+  // We place against the bottom face of floorPos+1 (still solid at this point).
+  // If we dug first, there would be nothing to place against.
   const floorName = bname(bot, floorPos);
   if (LIQUID.has(floorName)) {
     log(`  ⚠ Liquid (${floorName}) at floor — skipping column`);
     return false;
   }
-  if (floorName === 'glass') {
-    log(`  🔳 Floor already glass (previously patched hole) — clearing tunnel above`);
+  if (floorName === 'glass' || floorName === 'dirt' || floorName === 'cobblestone') {
+    log(`  🔳 Floor already patched (${floorName}) — clearing tunnel above`);
   } else if (floorName === 'air') {
-    log(`  🕳  Cave/hole below — patching floor with glass`);
+    log(`  🕳  Cave below — placing floor before digging tunnel`);
     const ok = await placeFill(bot, floorPos);
     if (!ok) return false;
   } else {
@@ -216,6 +228,35 @@ bot.once('spawn', async () => {
   moves.allowSprinting = true;
   moves.canDig = true;
   bot.pathfinder.setMovements(moves);
+
+  // ── Step 0: Pick up fill material from chest ───────────────────────────────
+  log(`\n▶ STEP 0 — Stock up on fill material from chest`);
+  await goTo(bot, CHEST_X, CHEST_Y, CHEST_Z);
+  try {
+    const chestBlock = bot.blockAt(new Vec3(CHEST_X, CHEST_Y, CHEST_Z));
+    const chest = await bot.openChest(chestBlock);
+    await sleep(300);
+    // Withdraw up to 2 stacks of glass, then up to 2 stacks of dirt as fallback
+    for (const wantName of ['glass', 'dirt', 'cobblestone']) {
+      const already = bot.inventory.items().filter(i => i.name === wantName)
+        .reduce((s, i) => s + i.count, 0);
+      if (already >= 64) { log(`  already have ${already} ${wantName}`); continue; }
+      const inChest = chest.containerItems().find(i => i.name === wantName);
+      if (inChest) {
+        const take = Math.min(inChest.count, 128 - already);
+        try {
+          await chest.withdraw(inChest.type, null, take);
+          log(`  withdrew ${take}× ${wantName}`);
+          await sleep(150);
+        } catch(e) { log(`  ✗ withdraw ${wantName}: ${e.message}`); }
+      } else {
+        log(`  no ${wantName} in chest`);
+      }
+    }
+    await chest.close();
+    const inv = bot.inventory.items().map(i => `${i.name}×${i.count}`).join(', ');
+    log(`  Inventory after stocking: ${inv || '(empty)'}`);
+  } catch(e) { log(`✗ chest err at startup: ${e.message}`); }
 
   // ── Step 1: Pathfind to mine entrance ──────────────────────────────────────
   log(`\n▶ STEP 1 — Travel to mine entrance`);
