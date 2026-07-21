@@ -252,33 +252,29 @@ bot.once('spawn', async () => {
         continue;
       }
 
-      const arrived = await goTo(bot, x, FLOOR_Y + 1, z);
-      if (!arrived) {
-        log(`  ✗ Could not reach (${x}, ${FLOOR_Y+1}, ${z}) — skipping`);
-        totalSkipped++;
-        continue;
-      }
-
-      // Safety check — if we ended up at the wrong Y, don't dig
-      const botY = Math.floor(bot.entity.position.y);
-      if (botY < FLOOR_Y || botY > FLOOR_Y + TUNNEL_HEIGHT) {
-        log(`  ✗ Bot at wrong Y=${botY} (expected ${FLOOR_Y+1}–${FLOOR_Y+TUNNEL_HEIGHT}) — skipping column`);
-        totalSkipped++;
-        continue;
-      }
-
       if (inventoryAlmostFull(bot)) {
         log(`\n⚠ Inventory low (${bot.inventory.emptySlotCount()} slots) — going to deposit`);
         await deposit(bot);
         log(`↩ Returning to work position`);
         await goTo(bot, ENT_X, ENT_Y, ENT_Z);
         await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
-        await goTo(bot, x, FLOOR_Y + 1, z);
+        // After returning, re-navigate to current column
+        await goTo(bot, x, FLOOR_Y + 1, z - zStep); // last cleared column
       }
 
+      // Dig the column first (bot can reach 1 block ahead without moving),
+      // then step into the cleared air — never pathfind into solid stone.
       const cleared = await clearColumn(bot, x, z);
-      if (cleared) totalCleared++;
-      else totalSkipped++;
+      if (cleared) {
+        totalCleared++;
+        // Now the space is air — walk in (trivial 1-step)
+        const arrived = await goTo(bot, x, FLOOR_Y + 1, z);
+        if (!arrived) log(`  ⚠ Could not step into cleared column (${x}, ${z})`);
+      } else {
+        totalSkipped++;
+        // Still need to move forward past skipped columns
+        await goTo(bot, x, FLOOR_Y + 1, z);
+      }
 
       const done = totalCleared + totalSkipped;
       if (done % 50 === 0 && done > 0) {
