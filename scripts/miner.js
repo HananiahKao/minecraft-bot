@@ -356,12 +356,22 @@ bot.once('spawn', async () => {
       if (cleared) {
         totalCleared++;
         await goTo(bot, x, FLOOR_Y + 1, z);
-        // Safety: if we fell, climb back before continuing
+        // Safety: if we fell, recover to entrance then re-walk the row
+        // from the start so we never pathfind through unexcavated stone.
         const curY = Math.floor(bot.entity.position.y);
         if (curY < FLOOR_Y) {
-          log(`  ⚠ Fell to Y=${curY} — climbing back to entrance`);
+          log(`  ⚠ Fell to Y=${curY} — recovering to entrance`);
+          await climbToSurface(bot);
           await goTo(bot, ENT_X, ENT_Y, ENT_Z);
-          await goTo(bot, x, FLOOR_Y + 1, z);
+          await goTo(bot, ENT_X, FLOOR_Y + 1, ENT_Z);
+          // Re-walk column-by-column from row start up to (but not past) z
+          // so the bot only moves through already-cleared space.
+          for (let rz = zStart; rz !== z + zStep; rz += zStep) {
+            if (rz === ENT_Z) continue;
+            const curP = bot.entity.position;
+            if (Math.abs(curP.x - x) < 1.5 && Math.abs(curP.z - rz) < 1.5) continue;
+            await goTo(bot, x, FLOOR_Y + 1, rz);
+          }
         }
       } else {
         totalSkipped++;

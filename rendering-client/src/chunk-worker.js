@@ -180,11 +180,17 @@ const NON_OCCLUDING_BLOCKS = new Set([
 const BLOCK_MODELS = {
   ladder: (props) => {
     const T = 0.1875; // 3/16 — matches vanilla ladder depth
+    // "facing" = direction the rungs face = direction away from the wall.
+    // The slab goes on the OPPOSITE side (flush against the wall it's attached to).
+    // facing=north → attached to south wall → slab at south (z high)
+    // facing=south → attached to north wall → slab at north (z low)
+    // facing=east  → attached to west wall  → slab at west  (x low)
+    // facing=west  → attached to east wall  → slab at east  (x high)
     switch (props.facing) {
-      case 'south': return [{ x0:0, y0:0, z0:1-T, x1:1, y1:1, z1:1   }];
-      case 'west':  return [{ x0:0, y0:0, z0:0,   x1:T, y1:1, z1:1   }];
-      case 'east':  return [{ x0:1-T, y0:0, z0:0, x1:1, y1:1, z1:1   }];
-      default:      return [{ x0:0, y0:0, z0:0,   x1:1, y1:1, z1:T   }]; // north
+      case 'north': return [{ x0:0, y0:0, z0:1-T, x1:1, y1:1, z1:1   }];
+      case 'south': return [{ x0:0, y0:0, z0:0,   x1:1, y1:1, z1:T   }];
+      case 'east':  return [{ x0:0, y0:0, z0:0,   x1:T, y1:1, z1:1   }];
+      default:      return [{ x0:1-T, y0:0, z0:0, x1:1, y1:1, z1:1   }]; // west
     }
   },
 };
