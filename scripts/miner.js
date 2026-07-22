@@ -23,7 +23,7 @@
  */
 
 const mineflayer = require('../bridge/node_modules/mineflayer');
-const { pathfinder, Movements, goals: { GoalBlock, GoalNear } } =
+const { pathfinder, Movements, goals: { GoalBlock, GoalNear, GoalXZ } } =
   require('../bridge/node_modules/mineflayer-pathfinder');
 const Vec3 = require('../bridge/node_modules/vec3');
 
@@ -72,6 +72,37 @@ const KEEP     = (name) => name.includes('pickaxe') || name.includes('shovel') |
 
 function bname(bot, pos) { return bot.blockAt(pos)?.name ?? 'air'; }
 
+// If the bot spawns below FLOOR_Y (fell to cave bottom), climb the ladder shaft
+// by walking into it and holding jump until we reach surface level.
+// Pathfinder can't handle a 130-block vertical climb in one GoalBlock call.
+async function climbToSurface(bot) {
+  if (bot.entity.position.y >= FLOOR_Y) return; // already above floor
+  log(`⚠ Bot is at Y=${bot.entity.position.y.toFixed(1)} — below floor. Climbing ladder shaft...`);
+
+  // Face the ladder shaft entrance and walk toward it
+  const shaftX = ENT_X + 0.5, shaftZ = ENT_Z + 0.5;
+  // First try to get horizontally into the shaft column
+  try {
+    await bot.pathfinder.goto(new GoalXZ(ENT_X, ENT_Z));
+  } catch(e) { /* may fail if obstructed — still try climbing */ }
+
+  // Hold jump + forward (toward ladder wall) to climb
+  bot.setControlState('jump', true);
+  bot.setControlState('forward', true);
+  const climbStart = Date.now();
+  await new Promise(resolve => {
+    const check = setInterval(() => {
+      if (bot.entity.position.y >= ENT_Y - 2 || Date.now() - climbStart > 60000) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 200);
+  });
+  bot.setControlState('jump', false);
+  bot.setControlState('forward', false);
+  log(`✅ Climbed to Y=${bot.entity.position.y.toFixed(1)}`);
+}
+
 function horizontalDanger(bot, pos) {
   for (const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
     if (LIQUID.has(bname(bot, pos.offset(dx,0,dz)))) return true;
@@ -80,10 +111,22 @@ function horizontalDanger(bot, pos) {
 }
 
 async function digOne(bot, blockPos) {
-  const b = bot.blockAt(blockPos);
-  if (!b || NO_DIG.has(b.name)) return;
-  log(`  ⛏  dig ${b.name} at ${blockPos}`);
-  try { await bot.dig(b); } catch(e) { log(`  ✗ dig err at ${blockPos}: ${e.message}`); }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const b = bot.blockAt(blockPos);
+    if (!b || NO_DIG.has(b.name)) return; // air or protected — done
+    if (attempt === 1) log(`  ⛏  dig ${b.name} at ${blockPos}`);
+    else               log(`  ↺  retry ${attempt} dig ${b.name} at ${blockPos}`);
+    try {
+      await bot.dig(b);
+    } catch(e) {
+      log(`  ✗ dig err (attempt ${attempt}): ${e.message}`);
+    }
+    await sleep(100);
+    // If the block is gone, we're done regardless of whether dig threw
+    const after = bot.blockAt(blockPos);
+    if (!after || after.name === 'air') return;
+  }
+  log(`  ✗ gave up on ${blockPos} after 3 attempts`);
 }
 
 // Place a fill block at floorPos (Y=FLOOR_Y) by clicking the bottom face of
@@ -228,6 +271,9 @@ bot.once('spawn', async () => {
   moves.allowSprinting = true;
   moves.canDig = true;
   bot.pathfinder.setMovements(moves);
+
+  // If bot spawned below the mine floor (fell to cave bottom), climb out first
+  await climbToSurface(bot);
 
   // ── Step 0: Pick up fill material from chest ───────────────────────────────
   log(`\n▶ STEP 0 — Stock up on fill material from chest`);

@@ -63,6 +63,7 @@ let _jumpPeakTime = null;
 function init() {
   const container = document.getElementById('canvas');
   renderer = new MinecraftRenderer(container);
+  window._r = renderer;
   entityManager = new EntityManager(renderer.scene);
   inputHandler = new InputHandler(renderer.camera);
 
@@ -87,7 +88,7 @@ function init() {
     onWindowOpen,
     onWindowClose,
     onWindowUpdate,
-    (msg) => entityManager && (msg.kind === 'item' ? entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName) : entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw)),
+    (msg) => entityManager && (msg.kind === 'item' ? entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName) : entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username)),
     (msg) => entityManager && (entityManager.moveItem(msg.id, msg.x, msg.y, msg.z) || entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw)),
     (id)  => entityManager && entityManager.destroy(id),
   );
@@ -466,7 +467,7 @@ function startUpdateLoop() {
         else if (msg.type === 'entity_spawn') {
           if (entityManager) {
             if (msg.kind === 'item') entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName);
-            else entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw);
+            else entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username);
           }
         }
         else if (msg.type === 'entity_move') {

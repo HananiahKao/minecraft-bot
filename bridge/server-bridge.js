@@ -94,11 +94,22 @@ function initBot() {
 
   // Log every server→client abilities packet so we can confirm the server accepted our flying state
   bot._client.on('abilities', (packet) => {
-    const flying    = !!(packet.flags & 0x02);
-    const canFly    = !!(packet.flags & 0x04);
+    const flying     = !!(packet.flags & 0x02);
+    const canFly     = !!(packet.flags & 0x04);
     const instabuild = !!(packet.flags & 0x08);
     _serverCanFly = canFly;
-    if (bot.entity) bot.entity.isFlying = flying; // mirror server's flying state immediately
+    if (bot.entity) bot.entity.isFlying = flying;
+
+    // Switching to survival/adventure: kill carried velocity and restore gravity
+    // so spectator upward momentum doesn't launch the bot into the air.
+    if (!flying && !canFly && bot.physics) {
+      bot.physics.gravity = bot.physics._defaultGravity ?? 0.08;
+      if (bot.entity && bot.entity.velocity) bot.entity.velocity.set(0, 0, 0);
+      ['forward','back','left','right','jump','sneak','sprint'].forEach(c => {
+        try { bot.setControlState(c, false); } catch(_) {}
+      });
+    }
+
     console.log(`[abilities←server] flags=0x${packet.flags.toString(16).padStart(2,'0')} flying=${flying} canFly=${canFly} instabuild=${instabuild} flySpeed=${packet.flyingSpeed} walkSpeed=${packet.walkingSpeed}`);
   });
 
@@ -206,6 +217,7 @@ function initBot() {
       id: entity.id,
       kind: entity.type === 'player' ? 'player' : 'mob',
       mobType: entity.name,
+      username: entity.username || null,
       x: entity.position.x,
       y: entity.position.y,
       z: entity.position.z,
@@ -720,8 +732,7 @@ wss.on('connection', (ws) => {
             }
           }
         } else {
-          // Survival / adventure — restore normal gravity if spectator left it zeroed
-          if (bot.physics.gravity === 0) bot.creative.stopFlying();
+          // Survival / adventure — gravity restored by abilities packet handler
           // Apply controls unchanged
           const valid = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
           for (const control of valid) {

@@ -166,10 +166,31 @@ const TRANSPARENT_BLOCKS = new Set([
 // Blocks that render as solid but don't occlude adjacent faces (you can see around them).
 // They go in the opaque pass but neighbors are NOT face-culled against them.
 const NON_OCCLUDING_BLOCKS = new Set([
-  'ladder', 'vine', 'scaffolding',
+  'vine', 'scaffolding',
   'torch', 'wall_torch', 'soul_torch', 'redstone_torch',
   'tripwire', 'tripwire_hook',
 ]);
+
+// ── Block model table ─────────────────────────────────────────────────────────
+// Maps block name → function(props) → array of boxes [{x0,y0,z0,x1,y1,z1}]
+// All coordinates are in 0–1 local block space.
+// Blocks with a model are excluded from the greedy mesher and rendered by the
+// generic model pass below, which emits 6 faces per box and culls faces that
+// touch a solid neighbor.
+const BLOCK_MODELS = {
+  ladder: (props) => {
+    const T = 0.1875; // 3/16 — matches vanilla ladder depth
+    switch (props.facing) {
+      case 'south': return [{ x0:0, y0:0, z0:1-T, x1:1, y1:1, z1:1   }];
+      case 'west':  return [{ x0:0, y0:0, z0:0,   x1:T, y1:1, z1:1   }];
+      case 'east':  return [{ x0:1-T, y0:0, z0:0, x1:1, y1:1, z1:1   }];
+      default:      return [{ x0:0, y0:0, z0:0,   x1:1, y1:1, z1:T   }]; // north
+    }
+  },
+};
+
+// Derived set of block names that skip the greedy mesher (have a custom model).
+const MODEL_BLOCKS = new Set(Object.keys(BLOCK_MODELS));
 
 const colorCache = new Map();
 
@@ -289,8 +310,17 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
-  // A neighbor blocks a face only if it fully covers it (solid, not transparent, not non-occluding)
-  function isSolid(id) { return id !== 0 && !transparentIds.has(id) && !nonOccludingIds.has(id); }
+  const modelIds = new Set();
+  for (const { name } of blocks) {
+    if (MODEL_BLOCKS.has(name)) {
+      const id = nameIndex.get(name);
+      if (id !== undefined) modelIds.add(id);
+    }
+  }
+
+  // A neighbor fully occludes a face only when it is solid (not transparent, non-occluding, or modeled).
+  function isSolid(id) { return id !== 0 && !transparentIds.has(id) && !nonOccludingIds.has(id) && !modelIds.has(id); }
+  function skipMesh(id) { return modelIds.has(id); }
   // Suppress internal faces between two transparent blocks of the same kind (e.g. water-water)
   function suppressTransparent(bt, neighbor) { return neighbor !== 0 && transparentIds.has(bt) && transparentIds.has(neighbor); }
 
@@ -300,7 +330,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = y < yMax ? gi(x, y+1, z) : 0;
-        _mask[x + z*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[x + z*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -317,7 +347,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = y > yMin ? gi(x, y-1, z) : 0;
-        _mask[x + z*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[x + z*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, 16, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -334,7 +364,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = gi(x, y, z+1);
-        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[x + (y-yMin)*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -351,7 +381,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let x = 0; x < 16; x++) {
         const bt = gi(x, y, z);
         const neighbor = gi(x, y, z-1);
-        _mask[x + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[x + (y-yMin)*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -368,7 +398,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
         const neighbor = gi(x+1, y, z);
-        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[z + (y-yMin)*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -385,7 +415,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       for (let z = 0; z < 16; z++) {
         const bt = gi(x, y, z);
         const neighbor = gi(x-1, y, z);
-        _mask[z + (y-yMin)*16] = (bt && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
+        _mask[z + (y-yMin)*16] = (bt && !skipMesh(bt) && !isSolid(neighbor) && !suppressTransparent(bt, neighbor)) ? bt : 0;
       }
     greedy(16, yRange, (i0, j0, w, h, t) => {
       const [r,g,b] = getBlockRGB(nameList[t]);
@@ -396,45 +426,43 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     });
   }
 
-  // ── Ladder panel pass ──────────────────────────────────────────────────────
-  // Ladders are non-occluding (excluded from greedy mesh) so we render them
-  // here as a thin quad panel flush against the wall they're attached to.
-  // facing=north → panel at Z face (south player view), etc.
-  const LADDER_COLOR = getBlockRGB('ladder');
-  const [lr, lg, lb] = LADDER_COLOR;
-  const T = 0.075; // panel thickness in blocks
+  // ── Generic block model pass ──────────────────────────────────────────────
+  // For every block that has an entry in BLOCK_MODELS, evaluate its box list
+  // and emit 6 faces per box. The face touching a solid neighbor is culled.
   for (const { x, y, z, name } of blocks) {
-    if (name !== 'ladder') continue;
+    const modelFn = BLOCK_MODELS[name];
+    if (!modelFn) continue;
     const props = blockPropsMap.get(`${x},${y},${z}`) || {};
-    const facing = props.facing || 'north';
+    const boxes = modelFn(props);
+    const [r, g, b] = getBlockRGB(name);
     const wx = bxBase + x, wy = y, wz = bzBase + z;
-    // Two quads — front face (outward) and back face (against wall).
-    // Minecraft: +Z = south, -Z = north, +X = east, -X = west
-    let quads;
-    if (facing === 'north') {
-      // Panel flush with north face (z=wy), outward normal = -Z
-      quads = [
-        { nx:0,ny:0,nz:-1, v:[ wx,wy,wz+T, wx+1,wy,wz+T, wx+1,wy+1,wz+T, wx,wy,wz+T, wx+1,wy+1,wz+T, wx,wy+1,wz+T ] },
-        { nx:0,ny:0,nz: 1, v:[ wx+1,wy,wz, wx,wy,wz, wx,wy+1,wz, wx+1,wy,wz, wx,wy+1,wz, wx+1,wy+1,wz ] },
-      ];
-    } else if (facing === 'south') {
-      quads = [
-        { nx:0,ny:0,nz: 1, v:[ wx+1,wy,wz+1-T, wx,wy,wz+1-T, wx,wy+1,wz+1-T, wx+1,wy,wz+1-T, wx,wy+1,wz+1-T, wx+1,wy+1,wz+1-T ] },
-        { nx:0,ny:0,nz:-1, v:[ wx,wy,wz+1, wx+1,wy,wz+1, wx+1,wy+1,wz+1, wx,wy,wz+1, wx+1,wy+1,wz+1, wx,wy+1,wz+1 ] },
-      ];
-    } else if (facing === 'east') {
-      quads = [
-        { nx: 1,ny:0,nz:0, v:[ wx+1-T,wy,wz+1, wx+1-T,wy,wz, wx+1-T,wy+1,wz, wx+1-T,wy,wz+1, wx+1-T,wy+1,wz, wx+1-T,wy+1,wz+1 ] },
-        { nx:-1,ny:0,nz:0, v:[ wx+1,wy,wz, wx+1,wy,wz+1, wx+1,wy+1,wz+1, wx+1,wy,wz, wx+1,wy+1,wz+1, wx+1,wy+1,wz ] },
-      ];
-    } else { // west
-      quads = [
-        { nx:-1,ny:0,nz:0, v:[ wx+T,wy,wz, wx+T,wy,wz+1, wx+T,wy+1,wz+1, wx+T,wy,wz, wx+T,wy+1,wz+1, wx+T,wy+1,wz ] },
-        { nx: 1,ny:0,nz:0, v:[ wx,wy,wz+1, wx,wy,wz, wx,wy+1,wz, wx,wy,wz+1, wx,wy+1,wz, wx,wy+1,wz+1 ] },
-      ];
-    }
-    for (const { nx, ny, nz, v } of quads) {
-      pushFace(false, nx,ny,nz, lr,lg,lb, v[0],v[1],v[2], v[3],v[4],v[5], v[6],v[7],v[8], v[9],v[10],v[11], v[12],v[13],v[14], v[15],v[16],v[17]);
+
+    for (const { x0: lx0, y0: ly0, z0: lz0, x1: lx1, y1: ly1, z1: lz1 } of boxes) {
+      // World-space corners
+      const X0=wx+lx0, Y0=wy+ly0, Z0=wz+lz0;
+      const X1=wx+lx1, Y1=wy+ly1, Z1=wz+lz1;
+
+      // Cull a face if the neighbor in that direction is solid.
+      // For model blocks we use a simple check: is the adjacent grid cell solid?
+      const solidNX = isSolid(gi(x-1, y, z));
+      const solidPX = isSolid(gi(x+1, y, z));
+      const solidNY = isSolid(gi(x, y-1, z));
+      const solidPY = isSolid(gi(x, y+1, z));
+      const solidNZ = isSolid(gi(x, y, z-1));
+      const solidPZ = isSolid(gi(x, y, z+1));
+
+      // +Y top
+      if (!solidPY) pushFace(false, 0,1,0, r,g,b, X0,Y1,Z1, X1,Y1,Z0, X0,Y1,Z0, X0,Y1,Z1, X1,Y1,Z1, X1,Y1,Z0);
+      // -Y bottom
+      if (!solidNY) pushFace(false, 0,-1,0, r,g,b, X0,Y0,Z0, X1,Y0,Z0, X0,Y0,Z1, X1,Y0,Z0, X1,Y0,Z1, X0,Y0,Z1);
+      // +Z south
+      if (!solidPZ) pushFace(false, 0,0,1, r,g,b, X0,Y0,Z1, X1,Y0,Z1, X0,Y1,Z1, X1,Y0,Z1, X1,Y1,Z1, X0,Y1,Z1);
+      // -Z north
+      if (!solidNZ) pushFace(false, 0,0,-1, r,g,b, X1,Y0,Z0, X0,Y0,Z0, X1,Y1,Z0, X0,Y0,Z0, X0,Y1,Z0, X1,Y1,Z0);
+      // +X east
+      if (!solidPX) pushFace(false, 1,0,0, r,g,b, X1,Y0,Z1, X1,Y0,Z0, X1,Y1,Z0, X1,Y0,Z1, X1,Y1,Z0, X1,Y1,Z1);
+      // -X west
+      if (!solidNX) pushFace(false, -1,0,0, r,g,b, X0,Y0,Z0, X0,Y0,Z1, X0,Y1,Z1, X0,Y0,Z0, X0,Y1,Z1, X0,Y1,Z0);
     }
   }
 

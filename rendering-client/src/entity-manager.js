@@ -156,7 +156,7 @@ function makeNameplate(label) {
   return sprite;
 }
 
-function makeMobMesh(mobType) {
+function makeMobMesh(mobType, displayName) {
   const [bw, bh, bd, hs] = MOB_DIMS[mobType] || DEFAULT_DIMS;
   const color = MOB_COLORS[mobType] ?? DEFAULT_MOB_COLOR;
   const mat = new THREE.MeshLambertMaterial({ color });
@@ -184,7 +184,7 @@ function makeMobMesh(mobType) {
 
   // Nameplate floats 0.3 blocks above the top of the model
   if (mobType) {
-    const nameplate = makeNameplate(mobType.replace(/_/g, ' '));
+    const nameplate = makeNameplate(displayName.replace(/_/g, ' '));
     nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
     group.add(nameplate);
   }
@@ -225,10 +225,11 @@ export class EntityManager {
     return true;
   }
 
-  spawnMob(id, mobType, x, y, z, yaw) {
+  spawnMob(id, mobType, x, y, z, yaw, username) {
     if (this._mobs.has(id)) this.destroyMob(id);
     if (!(mobType in MOB_COLORS)) this.unknownMobs.add(mobType);
-    const group = makeMobMesh(mobType);
+    const displayName = (mobType === 'player' && username) ? username : mobType;
+    const group = makeMobMesh(mobType, displayName);
     group.position.set(x, y, z);
     group.rotation.y = yaw || 0;
     this._scene.add(group);
