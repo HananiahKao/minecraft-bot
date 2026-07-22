@@ -30,6 +30,7 @@ const chunkQueue = [];          // parsed chunk objects waiting to be added to s
 const _chunkQueueKeys = new Set(); // keys currently in chunkQueue — prevents duplicates
 const unloadQueue = [];         // [chunkX, chunkZ] pairs waiting to be removed
 const _chunkBlockData = new Map(); // chunkKey → Map<"lx,y,lz", name> — kept in sync for fast block updates
+const _chunkPropsData = new Map(); // chunkKey → Map<"lx,y,lz", props> — block state props (facing, etc.)
 const _chunkEdgeCache = new Map(); // chunkKey → { nx, px, nz, pz } pre-built edge slices for O(1) buildEdges
 const _neighborRebuildQueue = new Set(); // chunk keys needing seam-fix rebuild (processed lazily when chunkQueue drains)
 
@@ -265,8 +266,8 @@ function onBlockUpdate(msg) {
   const lz = ((msg.z % 16) + 16) % 16;
   const bkey = `${lx},${msg.y},${lz}`;
 
-  if (msg.name === 'air') blockMap.delete(bkey);
-  else blockMap.set(bkey, msg.name);
+  if (msg.name === 'air') { blockMap.delete(bkey); _chunkPropsData.get(ckey)?.delete(bkey); }
+  else { blockMap.set(bkey, msg.name); if (msg.props) (_chunkPropsData.get(ckey) ?? (() => { const m = new Map(); _chunkPropsData.set(ckey, m); return m; })()).set(bkey, msg.props); }
 
   // Keep edge cache current
   _chunkEdgeCache.set(ckey, computeEdgeSlices(blockMap));
@@ -277,10 +278,12 @@ function onBlockUpdate(msg) {
   if (lz === 15) { const k = `${cx},${cz+1}`; if (_chunkBlockData.has(k)) _neighborRebuildQueue.add(k); }
 
   // Immediately rebuild the chunk from the updated local data
+  const propsMap2 = _chunkPropsData.get(ckey);
   const blocks = [];
   for (const [k, name] of blockMap) {
     const [x, y, z] = k.split(',').map(Number);
-    blocks.push({ x, y, z, name });
+    const props = propsMap2?.get(k);
+    blocks.push(props ? { x, y, z, name, props } : { x, y, z, name });
   }
   const reserved = (renderer.chunkMeshes.has(ckey) || renderer._updating.has(ckey))
     ? renderer.reserveUpdate(cx, cz)
@@ -443,8 +446,13 @@ function startUpdateLoop() {
         if (msg.type === 'chunk_data') {
           const ckey = `${msg.x},${msg.z}`;
           const blockMap = new Map();
-          for (const b of msg.blocks) blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
+          const propsMap = new Map();
+          for (const b of msg.blocks) {
+            blockMap.set(`${b.x},${b.y},${b.z}`, b.name);
+            if (b.props) propsMap.set(`${b.x},${b.y},${b.z}`, b.props);
+          }
           _chunkBlockData.set(ckey, blockMap);
+          _chunkPropsData.set(ckey, propsMap);
           _chunkEdgeCache.set(ckey, computeEdgeSlices(blockMap));
           if (!_chunkQueueKeys.has(ckey)) {
             _chunkQueueKeys.add(ckey);
@@ -489,6 +497,7 @@ function startUpdateLoop() {
       renderer.removeChunk(kx, kz);
       _chunkBlockData.delete(ukey);
       _chunkEdgeCache.delete(ukey);
+      _chunkPropsData.delete(ukey);
       _neighborRebuildQueue.delete(ukey);
     }
     const _dt_unload = performance.now() - _t_unload;
@@ -520,8 +529,9 @@ function startUpdateLoop() {
       const [rnx, rnz] = nkey.split(',').map(Number);
       const nblocks = _chunkBlockData.get(nkey);
       if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
+        const nprops = _chunkPropsData.get(nkey);
         const arr = [];
-        for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); arr.push({ x, y, z, name: n }); }
+        for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); const p = nprops?.get(k); arr.push(p ? { x, y, z, name: n, props: p } : { x, y, z, name: n }); }
         if (renderer.reserveUpdate(rnx, rnz)) { worker.postMessage({ x: rnx, z: rnz, blocks: arr, edges: buildEdges(rnx, rnz) }); sent++; }
       }
     }
