@@ -458,24 +458,42 @@ function scheduleInventoryUpdate() {
 
 // Flood-fill reachability culling for a chunk column.
 //
-// Strategy: BFS from all "open seeds" — the top layer (Y_MAX-1) and every cell
-// on the four vertical chunk faces — through all non-solid space.  Any solid
-// block that has at least one neighbour in that reachable set is kept; all
-// others are dropped.  Outside-chunk neighbours are treated as reachable so
-// that blocks on chunk seams are never incorrectly culled.
+// Seeds the BFS from:
+//   • The top layer (y = Y_MAX-1) — sky is always reachable.
+//   • Each cell on the four vertical chunk faces, but ONLY when the
+//     neighbouring chunk's mirror cell is non-solid.  This eliminates the
+//     "bar" artifact caused by always treating outside-chunk cells as open:
+//     solid stone that continues uniformly across a chunk boundary is now
+//     correctly recognised as interior and dropped.
 //
-// Why this beats the old 6-neighbour check:
-//   - A 10×10 solid slab only has its outermost ring kept; before, only the
-//     innermost cube (all 6 neighbours solid) was dropped.
-//   - A sealed underground cave (not connected to surface or chunk edges) has
-//     its surrounding walls dropped entirely.
-//   - A normal open cave connected to the surface is kept correctly because
-//     the BFS reaches it through the surface/edge seeds.
+// hasReachableNeighbour also consults the neighbouring chunks for the same
+// reason — an outside-chunk cell is only counted as reachable if the actual
+// block there is non-solid (or the neighbouring chunk is not loaded, in which
+// case we fall back to the conservative "include" behaviour).
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const W = 16, D = 16;
     const Y_MIN = -64, Y_MAX = 320; // full 1.19 world height
     const YR = Y_MAX - Y_MIN;       // 384
+
+    // ── Neighbouring chunk columns (may be null if not loaded) ───────────────
+    let nxCol = null, pxCol = null, nzCol = null, pzCol = null;
+    try { nxCol = bot.world.getColumn(chunkX - 1, chunkZ); } catch (e) {}
+    try { pxCol = bot.world.getColumn(chunkX + 1, chunkZ); } catch (e) {}
+    try { nzCol = bot.world.getColumn(chunkX, chunkZ - 1); } catch (e) {}
+    try { pzCol = bot.world.getColumn(chunkX, chunkZ + 1); } catch (e) {}
+
+    // Returns true when the block in a neighbour column at local (lx,y,lz) is
+    // a full solid cube.  If the column is not loaded, we don't know → false
+    // (treat as non-solid / open) so we stay conservative in both seeding and
+    // the visibility check.
+    const neighbourSolid = (col, lx, y, lz) => {
+      if (!col || y < Y_MIN || y >= Y_MAX) return false;
+      try {
+        const b = col.getBlock({ x: lx, y, z: lz });
+        return !!(b && b.boundingBox === 'block');
+      } catch (e) { return false; }
+    };
 
     // ── Step 1: build solid bitmap ────────────────────────────────────────────
     const solid = new Uint8Array(W * D * YR);
@@ -489,9 +507,8 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
           } catch (e) {}
         }
 
-    // ── Step 2: BFS from top + chunk edges ────────────────────────────────────
+    // ── Step 2: BFS from open seeds ───────────────────────────────────────────
     const reached = new Uint8Array(W * D * YR);
-    // Flat queue — push x,y,z as three consecutive integers for speed.
     const q = new Int32Array(W * D * YR * 3);
     let qHead = 0, qTail = 0;
 
@@ -503,12 +520,21 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
       q[qTail++] = x; q[qTail++] = y; q[qTail++] = z;
     };
 
-    // Top layer seeds
+    // Top layer — sky is always open.
     for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) visit(x, Y_MAX - 1, z);
-    // Four vertical face seeds
+
+    // Vertical face seeds: only where the adjacent chunk's mirror cell is non-solid.
+    // If the neighbouring chunk isn't loaded, !neighbourSolid returns false (non-solid
+    // assumed) so we still seed — correct conservative behaviour.
     for (let y = Y_MIN; y < Y_MAX; y++) {
-      for (let z = 0; z < D; z++) { visit(0, y, z); visit(W - 1, y, z); }
-      for (let x = 0; x < W; x++) { visit(x, y, 0); visit(x, y, D - 1); }
+      for (let z = 0; z < D; z++) {
+        if (!neighbourSolid(nxCol, 15, y, z)) visit(0,     y, z);
+        if (!neighbourSolid(pxCol,  0, y, z)) visit(W - 1, y, z);
+      }
+      for (let x = 0; x < W; x++) {
+        if (!neighbourSolid(nzCol, x, y, D - 1)) visit(x, y, 0);
+        if (!neighbourSolid(pzCol, x, y,     0)) visit(x, y, D - 1);
+      }
     }
 
     while (qHead < qTail) {
@@ -519,16 +545,27 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
     }
 
     // ── Step 3: emit only blocks adjacent to reachable space ─────────────────
-    // Outside-chunk neighbours are treated as reachable (conservative / correct
-    // because we never know what the adjacent chunk holds at that cell).
+    // For outside-chunk neighbours, consult the actual neighbour column instead
+    // of blindly returning true.  Sky (y >= Y_MAX) is always open; sub-bedrock
+    // (y < Y_MIN) is treated as solid.
     const hasReachableNeighbour = (x, y, z) => {
-      for (let d = 0; d < 6; d++) {
-        const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
-        const ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
-        const nz = z + (d === 4 ? -1 : d === 5 ? 1 : 0);
-        if (nx < 0 || nx >= W || nz < 0 || nz >= D || ny < Y_MIN || ny >= Y_MAX) return true;
-        if (reached[nx + nz * W + (ny - Y_MIN) * W * D]) return true;
-      }
+      // −X
+      if (x === 0)  { if (!neighbourSolid(nxCol, 15, y, z)) return true; }
+      else          { if (reached[(x-1) + z*W + (y-Y_MIN)*W*D]) return true; }
+      // +X
+      if (x === W-1){ if (!neighbourSolid(pxCol,  0, y, z)) return true; }
+      else          { if (reached[(x+1) + z*W + (y-Y_MIN)*W*D]) return true; }
+      // −Y (below)
+      if (y > Y_MIN && reached[x + z*W + (y-1-Y_MIN)*W*D]) return true;
+      // +Y (above) — sky above Y_MAX is always open
+      if (y === Y_MAX-1) return true;
+      if (reached[x + z*W + (y+1-Y_MIN)*W*D]) return true;
+      // −Z
+      if (z === 0)  { if (!neighbourSolid(nzCol, x, y, D-1)) return true; }
+      else          { if (reached[x + (z-1)*W + (y-Y_MIN)*W*D]) return true; }
+      // +Z
+      if (z === D-1){ if (!neighbourSolid(pzCol, x, y,   0)) return true; }
+      else          { if (reached[x + (z+1)*W + (y-Y_MIN)*W*D]) return true; }
       return false;
     };
 
