@@ -456,52 +456,96 @@ function scheduleInventoryUpdate() {
   }, 80);
 }
 
-// Returns true if the block at local (x,y,z) within chunkData is a full solid cube.
-// Used to cull interior occluded blocks before sending to the rendering client.
-function _isSolidInChunk(chunkData, x, y, z, Y_MIN, Y_MAX) {
-  if (x < 0 || x > 15 || z < 0 || z > 15 || y < Y_MIN || y >= Y_MAX) return false;
-  try {
-    const b = chunkData.getBlock({ x, y, z });
-    return b && b.boundingBox === 'block';
-  } catch (e) { return false; }
-}
-
+// Flood-fill reachability culling for a chunk column.
+//
+// Strategy: BFS from all "open seeds" — the top layer (Y_MAX-1) and every cell
+// on the four vertical chunk faces — through all non-solid space.  Any solid
+// block that has at least one neighbour in that reachable set is kept; all
+// others are dropped.  Outside-chunk neighbours are treated as reachable so
+// that blocks on chunk seams are never incorrectly culled.
+//
+// Why this beats the old 6-neighbour check:
+//   - A 10×10 solid slab only has its outermost ring kept; before, only the
+//     innermost cube (all 6 neighbours solid) was dropped.
+//   - A sealed underground cave (not connected to surface or chunk edges) has
+//     its surrounding walls dropped entirely.
+//   - A normal open cave connected to the surface is kept correctly because
+//     the BFS reaches it through the surface/edge seeds.
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
-    const blocks = [];
-    const Y_MIN = -64;
-    const Y_MAX = 256;
+    const W = 16, D = 16;
+    const Y_MIN = -64, Y_MAX = 320; // full 1.19 world height
+    const YR = Y_MAX - Y_MIN;       // 384
 
-    for (let x = 0; x < 16; x++) {
-      for (let z = 0; z < 16; z++) {
+    // ── Step 1: build solid bitmap ────────────────────────────────────────────
+    const solid = new Uint8Array(W * D * YR);
+    for (let x = 0; x < W; x++)
+      for (let z = 0; z < D; z++)
+        for (let y = Y_MIN; y < Y_MAX; y++) {
+          try {
+            const b = chunkData.getBlock({ x, y, z });
+            if (b && b.boundingBox === 'block')
+              solid[x + z * W + (y - Y_MIN) * W * D] = 1;
+          } catch (e) {}
+        }
+
+    // ── Step 2: BFS from top + chunk edges ────────────────────────────────────
+    const reached = new Uint8Array(W * D * YR);
+    // Flat queue — push x,y,z as three consecutive integers for speed.
+    const q = new Int32Array(W * D * YR * 3);
+    let qHead = 0, qTail = 0;
+
+    const visit = (x, y, z) => {
+      if (x < 0 || x >= W || z < 0 || z >= D || y < Y_MIN || y >= Y_MAX) return;
+      const i = x + z * W + (y - Y_MIN) * W * D;
+      if (solid[i] || reached[i]) return;
+      reached[i] = 1;
+      q[qTail++] = x; q[qTail++] = y; q[qTail++] = z;
+    };
+
+    // Top layer seeds
+    for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) visit(x, Y_MAX - 1, z);
+    // Four vertical face seeds
+    for (let y = Y_MIN; y < Y_MAX; y++) {
+      for (let z = 0; z < D; z++) { visit(0, y, z); visit(W - 1, y, z); }
+      for (let x = 0; x < W; x++) { visit(x, y, 0); visit(x, y, D - 1); }
+    }
+
+    while (qHead < qTail) {
+      const x = q[qHead++], y = q[qHead++], z = q[qHead++];
+      visit(x-1,y,z); visit(x+1,y,z);
+      visit(x,y-1,z); visit(x,y+1,z);
+      visit(x,y,z-1); visit(x,y,z+1);
+    }
+
+    // ── Step 3: emit only blocks adjacent to reachable space ─────────────────
+    // Outside-chunk neighbours are treated as reachable (conservative / correct
+    // because we never know what the adjacent chunk holds at that cell).
+    const hasReachableNeighbour = (x, y, z) => {
+      for (let d = 0; d < 6; d++) {
+        const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
+        const ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
+        const nz = z + (d === 4 ? -1 : d === 5 ? 1 : 0);
+        if (nx < 0 || nx >= W || nz < 0 || nz >= D || ny < Y_MIN || ny >= Y_MAX) return true;
+        if (reached[nx + nz * W + (ny - Y_MIN) * W * D]) return true;
+      }
+      return false;
+    };
+
+    const blocks = [];
+    for (let x = 0; x < W; x++)
+      for (let z = 0; z < D; z++)
         for (let y = Y_MIN; y < Y_MAX; y++) {
           try {
             const block = chunkData.getBlock({ x, y, z });
-            if (!block || !block.name || block.name === 'air') continue;
-
-            // Skip interior solid blocks: all 6 neighbours inside the same chunk are
-            // solid cubes, so this block cannot contribute any visible face.
-            // Only safe to skip when x and z are not on chunk edges (neighbours in
-            // adjacent chunks are unknown here and handled by edge-seam rebuilds).
-            if (block.boundingBox === 'block' && x >= 1 && x <= 14 && z >= 1 && z <= 14) {
-              if (
-                _isSolidInChunk(chunkData, x-1, y,   z,   Y_MIN, Y_MAX) &&
-                _isSolidInChunk(chunkData, x+1, y,   z,   Y_MIN, Y_MAX) &&
-                _isSolidInChunk(chunkData, x,   y-1, z,   Y_MIN, Y_MAX) &&
-                _isSolidInChunk(chunkData, x,   y+1, z,   Y_MIN, Y_MAX) &&
-                _isSolidInChunk(chunkData, x,   y,   z-1, Y_MIN, Y_MAX) &&
-                _isSolidInChunk(chunkData, x,   y,   z+1, Y_MIN, Y_MAX)
-              ) continue;
-            }
-
+            if (!block || !block.name || block.name === 'air' || block.name === 'cave_air') continue;
+            if (!hasReachableNeighbour(x, y, z)) continue;
             const entry = { x, y, z, name: String(block.name) };
             const props = block._properties;
             if (props && Object.keys(props).length > 0) entry.props = props;
             blocks.push(entry);
           } catch (e) {}
         }
-      }
-    }
 
     if (blocks.length > 0) {
       console.log(`📦 Chunk ${chunkX},${chunkZ}: ${blocks.length} blocks`);
