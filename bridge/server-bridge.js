@@ -8,10 +8,52 @@
 
 import http from 'http';
 import { WebSocketServer } from 'ws';
+import { Worker } from 'worker_threads';
 import mineflayer from 'mineflayer';
 import pkg from 'prismarine-chunk';
 import Vec3 from 'vec3';
 const { Chunk } = pkg;
+
+// ── BFS worker pool ──────────────────────────────────────────────────────────
+// Two workers so one can be filling its BFS queue while the other is running.
+// The main event loop is never blocked — player_input fires freely between chunks.
+const BFS_WORKERS = Array.from({ length: 2 }, () => {
+  const w = new Worker(new URL('./chunk-worker.js', import.meta.url));
+  w._busy = false;
+  w._resolve = null;
+  return w;
+});
+const _bfsPending = []; // { data, resolve } waiting for a free worker
+
+BFS_WORKERS.forEach(w => {
+  w.on('message', ({ reached }) => {
+    const resolve = w._resolve;
+    w._resolve = null;
+    w._busy = false;
+    resolve(reached);
+    // Immediately pick up the next queued BFS if any
+    _bfsDispatch();
+  });
+  w.on('error', err => console.error('BFS worker error:', err));
+});
+
+function _bfsDispatch() {
+  if (_bfsPending.length === 0) return;
+  const free = BFS_WORKERS.find(w => !w._busy);
+  if (!free) return;
+  const { data, resolve } = _bfsPending.shift();
+  free._busy = true;
+  free._resolve = resolve;
+  // solid buffer is transferred — zero-copy handoff to worker
+  free.postMessage(data, [data.solid.buffer]);
+}
+
+function bfsAsync(data) {
+  return new Promise(resolve => {
+    _bfsPending.push({ data, resolve });
+    _bfsDispatch();
+  });
+}
 
 const BRIDGE_PORT = 8080;
 
@@ -144,11 +186,11 @@ function initBot() {
     }, 50);
   });
 
-  bot.on('chunkColumnLoad', (chunk) => {
+  bot.on('chunkColumnLoad', async (chunk) => {
     if (!connectedClients.length) return;
     try {
       const chunkData = bot.world.getColumn(chunk.x, chunk.z);
-      if (chunkData) broadcastChunk(chunk.x, chunk.z, chunkData);
+      if (chunkData) await broadcastChunk(chunk.x, chunk.z, chunkData);
     } catch (e) {
       // Chunk not ready yet
     }
@@ -373,16 +415,14 @@ function requestChunksAround(position) {
   }
 
   let i = 0;
-  function sendNext() {
+  async function sendNext() {
     if (!bot || !bot.world || connectedClients.length === 0) return;
-    const end = Math.min(i + 4, coords.length); // 4 chunks per tick
-    for (; i < end; i++) {
-      const [x, z] = coords[i];
-      try {
-        const chunkData = bot.world.getColumn(x, z);
-        if (chunkData) broadcastChunk(x, z, chunkData);
-      } catch (e) {}
-    }
+    const [x, z] = coords[i];
+    try {
+      const chunkData = bot.world.getColumn(x, z);
+      if (chunkData) await broadcastChunk(x, z, chunkData);
+    } catch (e) {}
+    i++;
     if (i < coords.length) setImmediate(sendNext);
   }
   setImmediate(sendNext);
@@ -470,7 +510,7 @@ function scheduleInventoryUpdate() {
 // reason — an outside-chunk cell is only counted as reachable if the actual
 // block there is non-solid (or the neighbouring chunk is not loaded, in which
 // case we fall back to the conservative "include" behaviour).
-function broadcastChunk(chunkX, chunkZ, chunkData) {
+async function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const W = 16, D = 16;
     const Y_MIN = -64, Y_MAX = 320; // full 1.19 world height
@@ -483,10 +523,6 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
     try { nzCol = bot.world.getColumn(chunkX, chunkZ - 1); } catch (e) {}
     try { pzCol = bot.world.getColumn(chunkX, chunkZ + 1); } catch (e) {}
 
-    // Returns true when the block in a neighbour column at local (lx,y,lz) is
-    // a full solid cube.  If the column is not loaded, we don't know → false
-    // (treat as non-solid / open) so we stay conservative in both seeding and
-    // the visibility check.
     const neighbourSolid = (col, lx, y, lz) => {
       if (!col || y < Y_MIN || y >= Y_MAX) return false;
       try {
@@ -507,65 +543,44 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
           } catch (e) {}
         }
 
-    // ── Step 2: BFS from open seeds ───────────────────────────────────────────
-    const reached = new Uint8Array(W * D * YR);
-    const q = new Int32Array(W * D * YR * 3);
-    let qHead = 0, qTail = 0;
-
-    const visit = (x, y, z) => {
-      if (x < 0 || x >= W || z < 0 || z >= D || y < Y_MIN || y >= Y_MAX) return;
-      const i = x + z * W + (y - Y_MIN) * W * D;
-      if (solid[i] || reached[i]) return;
-      reached[i] = 1;
-      q[qTail++] = x; q[qTail++] = y; q[qTail++] = z;
-    };
-
-    // Top layer — sky is always open.
-    for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) visit(x, Y_MAX - 1, z);
-
-    // Vertical face seeds: only where the adjacent chunk's mirror cell is non-solid.
-    // If the neighbouring chunk isn't loaded, !neighbourSolid returns false (non-solid
-    // assumed) so we still seed — correct conservative behaviour.
-    for (let y = Y_MIN; y < Y_MAX; y++) {
+    // ── Step 2: build neighbour edge bitmaps (copied, not transferred) ────────
+    // nxEdge[z + yi*D] = solid flag for nx chunk's column x=15 at (z,y)
+    // pxEdge[z + yi*D] = solid flag for px chunk's column x=0  at (z,y)
+    // nzEdge[x + yi*W] = solid flag for nz chunk's row   z=D-1 at (x,y)
+    // pzEdge[x + yi*W] = solid flag for pz chunk's row   z=0   at (x,y)
+    const nxEdge = new Uint8Array(D * YR);
+    const pxEdge = new Uint8Array(D * YR);
+    const nzEdge = new Uint8Array(W * YR);
+    const pzEdge = new Uint8Array(W * YR);
+    for (let yi = 0; yi < YR; yi++) {
+      const y = Y_MIN + yi;
       for (let z = 0; z < D; z++) {
-        if (!neighbourSolid(nxCol, 15, y, z)) visit(0,     y, z);
-        if (!neighbourSolid(pxCol,  0, y, z)) visit(W - 1, y, z);
+        if (neighbourSolid(nxCol, 15, y, z)) nxEdge[z + yi * D] = 1;
+        if (neighbourSolid(pxCol,  0, y, z)) pxEdge[z + yi * D] = 1;
       }
       for (let x = 0; x < W; x++) {
-        if (!neighbourSolid(nzCol, x, y, D - 1)) visit(x, y, 0);
-        if (!neighbourSolid(pzCol, x, y,     0)) visit(x, y, D - 1);
+        if (neighbourSolid(nzCol, x, y, D - 1)) nzEdge[x + yi * W] = 1;
+        if (neighbourSolid(pzCol, x, y,     0)) pzEdge[x + yi * W] = 1;
       }
     }
 
-    while (qHead < qTail) {
-      const x = q[qHead++], y = q[qHead++], z = q[qHead++];
-      visit(x-1,y,z); visit(x+1,y,z);
-      visit(x,y-1,z); visit(x,y+1,z);
-      visit(x,y,z-1); visit(x,y,z+1);
-    }
+    // ── Step 3: BFS in worker thread — yields event loop ─────────────────────
+    const reached = await bfsAsync({ solid, nxEdge, pxEdge, nzEdge, pzEdge, W, D, YR, Y_MIN, Y_MAX });
 
-    // ── Step 3: emit only blocks adjacent to reachable space ─────────────────
-    // For outside-chunk neighbours, consult the actual neighbour column instead
-    // of blindly returning true.  Sky (y >= Y_MAX) is always open; sub-bedrock
-    // (y < Y_MIN) is treated as solid.
+    // ── Step 4: emit only blocks adjacent to reachable space ─────────────────
     const hasReachableNeighbour = (x, y, z) => {
-      // −X
-      if (x === 0)  { if (!neighbourSolid(nxCol, 15, y, z)) return true; }
-      else          { if (reached[(x-1) + z*W + (y-Y_MIN)*W*D]) return true; }
-      // +X
-      if (x === W-1){ if (!neighbourSolid(pxCol,  0, y, z)) return true; }
-      else          { if (reached[(x+1) + z*W + (y-Y_MIN)*W*D]) return true; }
-      // −Y (below)
-      if (y > Y_MIN && reached[x + z*W + (y-1-Y_MIN)*W*D]) return true;
-      // +Y (above) — sky above Y_MAX is always open
+      const yi = y - Y_MIN;
+      if (x === 0)   { if (!nxEdge[z + yi * D]) return true; }
+      else           { if (reached[(x-1) + z*W + yi*W*D]) return true; }
+      if (x === W-1) { if (!pxEdge[z + yi * D]) return true; }
+      else           { if (reached[(x+1) + z*W + yi*W*D]) return true; }
+      if (y > Y_MIN && reached[x + z*W + (yi-1)*W*D]) return true;
       if (y === Y_MAX-1) return true;
-      if (reached[x + z*W + (y+1-Y_MIN)*W*D]) return true;
-      // −Z
-      if (z === 0)  { if (!neighbourSolid(nzCol, x, y, D-1)) return true; }
-      else          { if (reached[x + (z-1)*W + (y-Y_MIN)*W*D]) return true; }
-      // +Z
-      if (z === D-1){ if (!neighbourSolid(pzCol, x, y,   0)) return true; }
-      else          { if (reached[x + (z+1)*W + (y-Y_MIN)*W*D]) return true; }
+      if (reached[x + z*W + (yi+1)*W*D]) return true;
+      if (z === 0)   { if (!nzEdge[x + yi * W]) return true; }
+      else           { if (reached[x + (z-1)*W + yi*W*D]) return true; }
+      if (z === D-1) { if (!pzEdge[x + yi * W]) return true; }
+      else           { if (reached[x + (z+1)*W + yi*W*D]) return true; }
       return false;
     };
 
@@ -713,18 +728,16 @@ wss.on('connection', (ws) => {
         }
       } else if (message.type === 'request_chunks' && botReady && bot && bot.world) {
         // Spread chunk processing over event-loop ticks so player_input messages
-        // are not blocked behind a bulk chunk send (4 chunks per setImmediate tick).
+        // are not blocked — 1 chunk per setImmediate, BFS offloaded to worker.
         const coords = message.chunks.slice();
         let i = 0;
-        function sendNext() {
+        async function sendNext() {
           if (!bot || !bot.world || connectedClients.length === 0) return;
-          const end = Math.min(i + 4, coords.length);
-          for (; i < end; i++) {
-            try {
-              const col = bot.world.getColumn(coords[i].x, coords[i].z);
-              if (col) broadcastChunk(coords[i].x, coords[i].z, col);
-            } catch (e) {}
-          }
+          try {
+            const col = bot.world.getColumn(coords[i].x, coords[i].z);
+            if (col) await broadcastChunk(coords[i].x, coords[i].z, col);
+          } catch (e) {}
+          i++;
           if (i < coords.length) setImmediate(sendNext);
         }
         setImmediate(sendNext);
