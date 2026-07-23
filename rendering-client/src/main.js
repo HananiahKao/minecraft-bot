@@ -22,7 +22,14 @@ let _heldSlot = 0;
 let _inventoryScreen = null;
 let _windowScreen = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
-const CHUNK_RENDER_RADIUS = 5;  // keep chunks within this many chunks of bot
+
+// Adaptive render radius: smaller on mobile / low-memory devices.
+// navigator.deviceMemory is Chrome-only (undefined elsewhere → assume desktop).
+const _isMobile = navigator.maxTouchPoints > 1 || /Mobi|Android|iPad/i.test(navigator.userAgent);
+const _deviceMem = navigator.deviceMemory; // GB, or undefined
+const CHUNK_RENDER_RADIUS = _isMobile
+  ? (_deviceMem != null && _deviceMem <= 2 ? 2 : 3)
+  : (_deviceMem != null && _deviceMem <= 4 ? 4 : 5);
 let lastBotChunkX = null;
 let lastBotChunkZ = null;
 const rawChunkQueue = [];       // raw JSON strings — parsed lazily in frame loop

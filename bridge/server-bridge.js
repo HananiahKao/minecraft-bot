@@ -160,11 +160,24 @@ function initBot() {
   bot.on('blockUpdate', (oldBlock, newBlock) => {
     if (!connectedClients.length) return;
     const pos = newBlock.position;
-    broadcastMessage({
-      type: 'block_update',
-      x: pos.x, y: pos.y, z: pos.z,
-      name: newBlock.name || 'air'
-    });
+    const newName = newBlock.name || 'air';
+    broadcastMessage({ type: 'block_update', x: pos.x, y: pos.y, z: pos.z, name: newName });
+
+    // When a solid block is removed it may expose neighbours that were skipped during
+    // initial chunk load (interior occluded blocks).  Re-send their current state so
+    // the rendering client adds them to its data and rebuilds the mesh correctly.
+    if (newName === 'air' || newName === 'cave_air') {
+      for (const [dx, dy, dz] of [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]]) {
+        try {
+          const nb = bot.blockAt(new Vec3(pos.x+dx, pos.y+dy, pos.z+dz));
+          if (!nb || !nb.name || nb.name === 'air') continue;
+          const msg = { type: 'block_update', x: pos.x+dx, y: pos.y+dy, z: pos.z+dz, name: nb.name };
+          const nbProps = nb._properties;
+          if (nbProps && Object.keys(nbProps).length > 0) msg.props = nbProps;
+          broadcastMessage(msg);
+        } catch (e) {}
+      }
+    }
   });
 
   // Track pending item entity IDs — entitySpawn fires before the metadata packet arrives.
@@ -443,6 +456,16 @@ function scheduleInventoryUpdate() {
   }, 80);
 }
 
+// Returns true if the block at local (x,y,z) within chunkData is a full solid cube.
+// Used to cull interior occluded blocks before sending to the rendering client.
+function _isSolidInChunk(chunkData, x, y, z, Y_MIN, Y_MAX) {
+  if (x < 0 || x > 15 || z < 0 || z > 15 || y < Y_MIN || y >= Y_MAX) return false;
+  try {
+    const b = chunkData.getBlock({ x, y, z });
+    return b && b.boundingBox === 'block';
+  } catch (e) { return false; }
+}
+
 function broadcastChunk(chunkX, chunkZ, chunkData) {
   try {
     const blocks = [];
@@ -454,16 +477,27 @@ function broadcastChunk(chunkX, chunkZ, chunkData) {
         for (let y = Y_MIN; y < Y_MAX; y++) {
           try {
             const block = chunkData.getBlock({ x, y, z });
-            if (block && block.name && block.name !== 'air') {
-              const entry = { x, y, z, name: String(block.name) };
-              // Include block state properties for directional blocks (ladders, etc.)
-              // mineflayer exposes state as _properties (block.properties is undefined)
-              const props = block._properties;
-              if (props && Object.keys(props).length > 0) {
-                entry.props = props;
-              }
-              blocks.push(entry);
+            if (!block || !block.name || block.name === 'air') continue;
+
+            // Skip interior solid blocks: all 6 neighbours inside the same chunk are
+            // solid cubes, so this block cannot contribute any visible face.
+            // Only safe to skip when x and z are not on chunk edges (neighbours in
+            // adjacent chunks are unknown here and handled by edge-seam rebuilds).
+            if (block.boundingBox === 'block' && x >= 1 && x <= 14 && z >= 1 && z <= 14) {
+              if (
+                _isSolidInChunk(chunkData, x-1, y,   z,   Y_MIN, Y_MAX) &&
+                _isSolidInChunk(chunkData, x+1, y,   z,   Y_MIN, Y_MAX) &&
+                _isSolidInChunk(chunkData, x,   y-1, z,   Y_MIN, Y_MAX) &&
+                _isSolidInChunk(chunkData, x,   y+1, z,   Y_MIN, Y_MAX) &&
+                _isSolidInChunk(chunkData, x,   y,   z-1, Y_MIN, Y_MAX) &&
+                _isSolidInChunk(chunkData, x,   y,   z+1, Y_MIN, Y_MAX)
+              ) continue;
             }
+
+            const entry = { x, y, z, name: String(block.name) };
+            const props = block._properties;
+            if (props && Object.keys(props).length > 0) entry.props = props;
+            blocks.push(entry);
           } catch (e) {}
         }
       }
@@ -742,9 +776,11 @@ wss.on('connection', (ws) => {
           }
         }
 
-        // Apply look direction
+        // Apply look direction.
+        // THREE.js euler.y=0 = north (−Z); Minecraft yaw=0 = south (+Z).
+        // Conversion: mcYaw = π − euler.y
         if (typeof yaw === 'number' && typeof pitch === 'number') {
-          bot.look(yaw, pitch, true);
+          bot.look(Math.PI - yaw, pitch, true);
         }
       }
     } catch (e) {
