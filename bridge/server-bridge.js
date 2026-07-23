@@ -12,7 +12,48 @@ import { Worker } from 'worker_threads';
 import mineflayer from 'mineflayer';
 import pkg from 'prismarine-chunk';
 import Vec3 from 'vec3';
+import minecraftData from 'minecraft-data';
+import PrismarineBlock from 'prismarine-block';
 const { Chunk } = pkg;
+
+// ── Block stateId lookup tables ───────────────────────────────────────────────
+// Built once per MC version. Allows broadcastChunk to use getBlockStateId()
+// (raw integer, no object allocation) instead of getBlock() (creates a Block
+// object per call) — ~10× faster per-block in the hot path.
+//
+// solidByState[stateId] = 1 if boundingBox === 'block', else 0
+// nameByState[stateId]  = block name string, or null for air/void
+// propsByState[stateId] = { facing, waterlogged, … } or null
+let _solidByState = null;
+let _nameByState  = null;
+let _propsByState = null;
+
+function buildBlockLookups(version) {
+  const Block = PrismarineBlock(version);
+  const mc    = minecraftData(version);
+  const AIR   = new Set(['air', 'cave_air', 'void_air']);
+
+  let maxState = 0;
+  for (const b of Object.values(mc.blocksByName))
+    if (b.maxStateId > maxState) maxState = b.maxStateId;
+
+  _solidByState = new Uint8Array(maxState + 1);
+  _nameByState  = new Array(maxState + 1).fill(null);
+  _propsByState = new Array(maxState + 1).fill(null);
+
+  // Walk every possible stateId once at startup (≤24K calls, <50ms total).
+  for (let sid = 0; sid <= maxState; sid++) {
+    try {
+      const b = Block.fromStateId(sid, 0);
+      if (!b || AIR.has(b.name)) continue;
+      _solidByState[sid] = b.boundingBox === 'block' ? 1 : 0;
+      _nameByState[sid]  = b.name;
+      const p = b._properties;
+      if (p && Object.keys(p).length > 0) _propsByState[sid] = p;
+    } catch (_) {}
+  }
+  console.log(`🗂️  Block lookup tables built (${maxState + 1} stateIds)`);
+}
 
 // ── BFS worker pool ──────────────────────────────────────────────────────────
 // Two workers so one can be filling its BFS queue while the other is running.
@@ -160,6 +201,9 @@ function initBot() {
     if (bot.entity) console.log(`📍 Position: ${bot.entity.position.toString()}`);
     _reconnectDelay = 2000; // reset backoff on successful connection
     botReady = true;
+
+    // Build stateId lookup tables for the connected server version (once per connection).
+    if (!_solidByState) buildBlockLookups(bot.version);
     _pickInProgress = false;
 
     broadcastMessage({
@@ -510,44 +554,48 @@ function scheduleInventoryUpdate() {
 // reason — an outside-chunk cell is only counted as reachable if the actual
 // block there is non-solid (or the neighbouring chunk is not loaded, in which
 // case we fall back to the conservative "include" behaviour).
+// Helper: read a stateId from a chunk column without allocating a Block object.
+// Returns 0 (air) if the column is null or the coordinate is out of range.
+const _stateAt = (col, x, y, z) => {
+  if (!col || y < -64 || y >= 320) return 0;
+  try { return col.getBlockStateId({ x, y, z }) ?? 0; } catch (_) { return 0; }
+};
+
 async function broadcastChunk(chunkX, chunkZ, chunkData) {
+  // Guard: lookup tables must be ready (built on bot spawn).
+  if (!_solidByState) return;
   try {
     const W = 16, D = 16;
     const Y_MIN = -64, Y_MAX = 320; // full 1.19 world height
     const YR = Y_MAX - Y_MIN;       // 384
 
-    // ── Neighbouring chunk columns (may be null if not loaded) ───────────────
+    // ── Neighbouring chunk columns ────────────────────────────────────────────
     let nxCol = null, pxCol = null, nzCol = null, pzCol = null;
-    try { nxCol = bot.world.getColumn(chunkX - 1, chunkZ); } catch (e) {}
-    try { pxCol = bot.world.getColumn(chunkX + 1, chunkZ); } catch (e) {}
-    try { nzCol = bot.world.getColumn(chunkX, chunkZ - 1); } catch (e) {}
-    try { pzCol = bot.world.getColumn(chunkX, chunkZ + 1); } catch (e) {}
+    try { nxCol = bot.world.getColumn(chunkX - 1, chunkZ); } catch (_) {}
+    try { pxCol = bot.world.getColumn(chunkX + 1, chunkZ); } catch (_) {}
+    try { nzCol = bot.world.getColumn(chunkX, chunkZ - 1); } catch (_) {}
+    try { pzCol = bot.world.getColumn(chunkX, chunkZ + 1); } catch (_) {}
 
-    const neighbourSolid = (col, lx, y, lz) => {
-      if (!col || y < Y_MIN || y >= Y_MAX) return false;
-      try {
-        const b = col.getBlock({ x: lx, y, z: lz });
-        return !!(b && b.boundingBox === 'block');
-      } catch (e) { return false; }
-    };
+    // ── Step 1 (single pass): solid bitmap + raw block list ──────────────────
+    // getBlockStateId() returns a raw integer — no Block object allocation.
+    // _solidByState / _nameByState / _propsByState are O(1) array lookups.
+    // This replaces the two separate getBlock() loops (was ~196 K calls → now ~98 K).
+    const solid    = new Uint8Array(W * D * YR);
+    const rawBlocks = []; // { i, x, y, z, name, props } for all non-air cells
 
-    // ── Step 1: build solid bitmap ────────────────────────────────────────────
-    const solid = new Uint8Array(W * D * YR);
     for (let x = 0; x < W; x++)
       for (let z = 0; z < D; z++)
         for (let y = Y_MIN; y < Y_MAX; y++) {
-          try {
-            const b = chunkData.getBlock({ x, y, z });
-            if (b && b.boundingBox === 'block')
-              solid[x + z * W + (y - Y_MIN) * W * D] = 1;
-          } catch (e) {}
+          const sid = _stateAt(chunkData, x, y, z);
+          if (!sid) continue;                       // stateId 0 = air
+          const name = _nameByState[sid];
+          if (!name) continue;                      // air variant or unknown
+          const i = x + z * W + (y - Y_MIN) * W * D;
+          if (_solidByState[sid]) solid[i] = 1;
+          rawBlocks.push({ i, x, y, z, name, props: _propsByState[sid] });
         }
 
-    // ── Step 2: build neighbour edge bitmaps (copied, not transferred) ────────
-    // nxEdge[z + yi*D] = solid flag for nx chunk's column x=15 at (z,y)
-    // pxEdge[z + yi*D] = solid flag for px chunk's column x=0  at (z,y)
-    // nzEdge[x + yi*W] = solid flag for nz chunk's row   z=D-1 at (x,y)
-    // pzEdge[x + yi*W] = solid flag for pz chunk's row   z=0   at (x,y)
+    // ── Step 2: neighbour edge bitmaps ────────────────────────────────────────
     const nxEdge = new Uint8Array(D * YR);
     const pxEdge = new Uint8Array(D * YR);
     const nzEdge = new Uint8Array(W * YR);
@@ -555,49 +603,44 @@ async function broadcastChunk(chunkX, chunkZ, chunkData) {
     for (let yi = 0; yi < YR; yi++) {
       const y = Y_MIN + yi;
       for (let z = 0; z < D; z++) {
-        if (neighbourSolid(nxCol, 15, y, z)) nxEdge[z + yi * D] = 1;
-        if (neighbourSolid(pxCol,  0, y, z)) pxEdge[z + yi * D] = 1;
+        if (_solidByState[_stateAt(nxCol, 15, y,     z)]) nxEdge[z + yi * D] = 1;
+        if (_solidByState[_stateAt(pxCol,  0, y,     z)]) pxEdge[z + yi * D] = 1;
       }
       for (let x = 0; x < W; x++) {
-        if (neighbourSolid(nzCol, x, y, D - 1)) nzEdge[x + yi * W] = 1;
-        if (neighbourSolid(pzCol, x, y,     0)) pzEdge[x + yi * W] = 1;
+        if (_solidByState[_stateAt(nzCol, x, y, D - 1)]) nzEdge[x + yi * W] = 1;
+        if (_solidByState[_stateAt(pzCol, x, y,     0)]) pzEdge[x + yi * W] = 1;
       }
     }
 
     // ── Step 3: BFS in worker thread — yields event loop ─────────────────────
     const reached = await bfsAsync({ solid, nxEdge, pxEdge, nzEdge, pzEdge, W, D, YR, Y_MIN, Y_MAX });
 
-    // ── Step 4: emit only blocks adjacent to reachable space ─────────────────
-    const hasReachableNeighbour = (x, y, z) => {
-      const yi = y - Y_MIN;
-      if (x === 0)   { if (!nxEdge[z + yi * D]) return true; }
-      else           { if (reached[(x-1) + z*W + yi*W*D]) return true; }
-      if (x === W-1) { if (!pxEdge[z + yi * D]) return true; }
-      else           { if (reached[(x+1) + z*W + yi*W*D]) return true; }
-      if (y > Y_MIN && reached[x + z*W + (yi-1)*W*D]) return true;
-      if (y === Y_MAX-1) return true;
-      if (reached[x + z*W + (yi+1)*W*D]) return true;
-      if (z === 0)   { if (!nzEdge[x + yi * W]) return true; }
-      else           { if (reached[x + (z-1)*W + yi*W*D]) return true; }
-      if (z === D-1) { if (!pzEdge[x + yi * W]) return true; }
-      else           { if (reached[x + (z+1)*W + yi*W*D]) return true; }
-      return false;
-    };
-
+    // ── Step 4: filter rawBlocks to only those adjacent to reachable air ──────
     const blocks = [];
-    for (let x = 0; x < W; x++)
-      for (let z = 0; z < D; z++)
-        for (let y = Y_MIN; y < Y_MAX; y++) {
-          try {
-            const block = chunkData.getBlock({ x, y, z });
-            if (!block || !block.name || block.name === 'air' || block.name === 'cave_air') continue;
-            if (!hasReachableNeighbour(x, y, z)) continue;
-            const entry = { x, y, z, name: String(block.name) };
-            const props = block._properties;
-            if (props && Object.keys(props).length > 0) entry.props = props;
-            blocks.push(entry);
-          } catch (e) {}
-        }
+    for (const { i, x, y, z, name, props } of rawBlocks) {
+      const yi = y - Y_MIN;
+      let exposed = false;
+      if (x === 0)   { if (!nxEdge[z + yi * D]) exposed = true; }
+      else           { if (reached[(x-1) + z*W + yi*W*D]) exposed = true; }
+      if (!exposed) {
+        if (x === W-1) { if (!pxEdge[z + yi * D]) exposed = true; }
+        else           { if (reached[(x+1) + z*W + yi*W*D]) exposed = true; }
+      }
+      if (!exposed && y > Y_MIN && reached[x + z*W + (yi-1)*W*D]) exposed = true;
+      if (!exposed && (y === Y_MAX-1 || reached[x + z*W + (yi+1)*W*D]))   exposed = true;
+      if (!exposed) {
+        if (z === 0)   { if (!nzEdge[x + yi * W]) exposed = true; }
+        else           { if (reached[x + (z-1)*W + yi*W*D]) exposed = true; }
+      }
+      if (!exposed) {
+        if (z === D-1) { if (!pzEdge[x + yi * W]) exposed = true; }
+        else           { if (reached[x + (z+1)*W + yi*W*D]) exposed = true; }
+      }
+      if (!exposed) continue;
+      const entry = { x, y, z, name };
+      if (props) entry.props = props;
+      blocks.push(entry);
+    }
 
     if (blocks.length > 0) {
       console.log(`📦 Chunk ${chunkX},${chunkZ}: ${blocks.length} blocks`);
