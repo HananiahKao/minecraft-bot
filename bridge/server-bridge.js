@@ -21,7 +21,7 @@ const { Chunk } = pkg;
 // (raw integer, no object allocation) instead of getBlock() (creates a Block
 // object per call) — ~10× faster per-block in the hot path.
 //
-// solidByState[stateId] = 1 if boundingBox === 'block', else 0
+// solidByState[stateId] = 1 if block is opaque (BFS cannot pass through), else 0
 // nameByState[stateId]  = block name string, or null for air/void
 // propsByState[stateId] = { facing, waterlogged, … } or null
 let _solidByState = null;
@@ -46,7 +46,13 @@ function buildBlockLookups(version) {
     try {
       const b = Block.fromStateId(sid, 0);
       if (!b || AIR.has(b.name)) continue;
-      _solidByState[sid] = b.boundingBox === 'block' ? 1 : 0;
+      // Use transparent flag, not boundingBox, as the BFS solid criterion.
+      // minecraft-data marks ladders as boundingBox='block' (they have full
+      // collision volume) but transparent=true (light passes through).
+      // BFS must flow through ladders so vertical shafts connected only via
+      // a ladder column are correctly detected as reachable.
+      // Same logic applies to glass, water, and other see-through blocks.
+      _solidByState[sid] = b.transparent ? 0 : 1;
       _nameByState[sid]  = b.name;
       const p = b._properties;
       if (p && Object.keys(p).length > 0) _propsByState[sid] = p;
