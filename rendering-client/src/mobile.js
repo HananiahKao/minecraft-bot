@@ -29,27 +29,43 @@ function injectOverlay(inp) {
   overlay.innerHTML = buildHTML();
   document.body.appendChild(overlay);
 
-  // Wire every button
+  // Wire every button using touch events (not pointer events).
+  // Reason: on iOS Safari, setPointerCapture on pointerdown is unreliable —
+  // a 1px finger drift before liftoff can re-route events to a neighbouring
+  // button, causing the wrong control to fire. touchstart/touchend with an
+  // explicit touch identifier + stopPropagation avoids this entirely.
+  // stopPropagation also prevents the touch from reaching the canvas's
+  // touchstart handler (which calls preventDefault for the look gesture).
   const wire = (id, control, toggle = false) => {
     const el = document.getElementById(id);
     if (!el) return;
     if (toggle) {
-      // Sprint is a toggle, not hold
       let on = false;
-      el.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); el.setPointerCapture(e.pointerId);
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault(); e.stopPropagation();
         on = !on; inp.setControl(control, on);
         el.style.background = on ? BTN_ON : BTN_OFF;
-      });
+      }, { passive: false });
     } else {
-      el.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); el.setPointerCapture(e.pointerId);
+      let activeTouchId = null;
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (activeTouchId !== null) return; // already held
+        activeTouchId = e.changedTouches[0].identifier;
         inp.setControl(control, true);
         el.style.background = BTN_ON;
-      });
-      const up = (e) => { inp.setControl(control, false); el.style.background = BTN_OFF; };
-      el.addEventListener('pointerup',     up);
-      el.addEventListener('pointercancel', up);
+      }, { passive: false });
+      const up = (e) => {
+        for (const t of e.changedTouches) {
+          if (t.identifier === activeTouchId) {
+            activeTouchId = null;
+            inp.setControl(control, false);
+            el.style.background = BTN_OFF;
+          }
+        }
+      };
+      el.addEventListener('touchend',    up);
+      el.addEventListener('touchcancel', up);
     }
   };
 
@@ -66,12 +82,12 @@ function injectOverlay(inp) {
   // Place is a one-shot tap
   const placeEl = document.getElementById('mb-place');
   if (placeEl) {
-    placeEl.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); placeEl.setPointerCapture(e.pointerId);
+    placeEl.addEventListener('touchstart', (e) => {
+      e.preventDefault(); e.stopPropagation();
       inp.setControl('placePending', true);
       placeEl.style.background = BTN_ON;
       setTimeout(() => { placeEl.style.background = BTN_OFF; }, 120);
-    });
+    }, { passive: false });
   }
 }
 

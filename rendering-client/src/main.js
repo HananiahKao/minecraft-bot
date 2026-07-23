@@ -393,6 +393,7 @@ let _loadPhaseRecorded = false;
 let _initialLoadMs = null;
 let _metricsLastUpdate = 0;
 let _sessionStart = performance.now();
+let _metricsCollapsed = _isMobile; // collapsed by default on mobile
 
 // Per-second snapshot ring buffer (last 10 seconds)
 const SNAPSHOT_COUNT = 10;
@@ -728,28 +729,48 @@ function updateMetrics() {
     }).join('<br>');
   }
 
-  const copyBtnHtml = `<button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
-  el.innerHTML = copyBtnHtml + '<br><br>' + statsHtml.replace(/^<br>/, '') + tabBarHtml + tabContentHtml;
+  // Collapse toggle header (always visible)
+  const toggleLabel = _metricsCollapsed ? '▶ Stats' : '▼ Stats';
+  const toggleHtml = `<span id="metrics-toggle" style="cursor:pointer;user-select:none;font-weight:bold;padding:2px 4px;border-radius:3px">${toggleLabel}</span>`;
 
-  // Tab switching
-  el.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.onclick = (e) => {
+  if (_metricsCollapsed) {
+    // Compact view: just toggle + one-line summary
+    const summary = `&nbsp;&nbsp;${_currentFps} FPS | ${renderer ? renderer.loadedChunks : 0} chunks | ${vertStr} verts`;
+    el.innerHTML = toggleHtml + summary;
+  } else {
+    const copyBtnHtml = `<button id="metrics-copy" style="padding:2px 8px;font-size:10px;cursor:pointer;background:#333;color:#fff;border:1px solid #666;border-radius:3px">Copy</button>`;
+    el.innerHTML = toggleHtml + '&nbsp;&nbsp;' + copyBtnHtml + '<br><br>' + statsHtml.replace(/^<br>/, '') + tabBarHtml + tabContentHtml;
+
+    // Tab switching
+    el.querySelectorAll('[data-tab]').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        _activeTab = btn.dataset.tab;
+        updateMetrics();
+      };
+    });
+
+    const copyBtn = document.getElementById('metrics-copy');
+    if (copyBtn) {
+      copyBtn.onclick = (e) => {
+        e.stopPropagation();
+        const finish = () => { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); };
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(plainText).then(finish).catch(() => fallbackCopy(plainText, finish));
+        } else {
+          fallbackCopy(plainText, finish);
+        }
+      };
+    }
+  }
+
+  // Wire toggle (always, after innerHTML set)
+  const toggleEl = document.getElementById('metrics-toggle');
+  if (toggleEl) {
+    toggleEl.onclick = (e) => {
       e.stopPropagation();
-      _activeTab = btn.dataset.tab;
+      _metricsCollapsed = !_metricsCollapsed;
       updateMetrics();
-    };
-  });
-
-  const copyBtn = document.getElementById('metrics-copy');
-  if (copyBtn) {
-    copyBtn.onclick = (e) => {
-      e.stopPropagation();
-      const finish = () => { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); };
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(plainText).then(finish).catch(() => fallbackCopy(plainText, finish));
-      } else {
-        fallbackCopy(plainText, finish);
-      }
     };
   }
 }
