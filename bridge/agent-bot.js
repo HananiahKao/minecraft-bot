@@ -247,7 +247,7 @@ export class AgentBot {
   }
 
   _summarizeInventory() {
-    if (!this.bot) return [];
+    if (!this.bot?.inventory) return [];
     const counts = {};
     for (const item of this.bot.inventory.items()) {
       counts[item.name] = (counts[item.name] || 0) + item.count;
