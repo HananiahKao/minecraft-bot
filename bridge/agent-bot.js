@@ -8,11 +8,13 @@
  */
 
 import mineflayer from 'mineflayer';
-import { pathfinder, Movements, goals } from 'mineflayer-pathfinder';
+import pathfinderPkg from 'mineflayer-pathfinder';
+const { pathfinder, Movements, goals } = pathfinderPkg;
 import { Vec3 } from 'vec3';
 
-const OMLX_BASE = process.env.OMLX_URL || 'http://localhost:8000';
-const OMLX_MODEL = process.env.OMLX_MODEL || 'lmstudio-community/Qwen2.5-Coder-7B-Instruct-MLX-4bit';
+const OMLX_BASE  = process.env.OMLX_URL   || 'http://localhost:10000';
+const OMLX_KEY   = process.env.OMLX_KEY   || 'omlx';
+const OMLX_MODEL = process.env.OMLX_MODEL || 'Qwen2.5-Coder-7B-Instruct-MLX-4bit';
 const TICK_MS = 2000; // reasoning interval
 const MAX_LOG = 100;  // log lines kept per agent
 
@@ -415,7 +417,7 @@ What action do you take next toward your goal?`;
 
     const resp = await fetch(`${OMLX_BASE}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OMLX_KEY}` },
       body: JSON.stringify({
         model: OMLX_MODEL,
         messages: this._history,

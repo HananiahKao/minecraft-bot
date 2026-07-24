@@ -32,6 +32,10 @@ tmux send-keys -t $SESSION_NAME:bridge "bash $REPO_DIR/scripts/restart-bridge.sh
 tmux new-window -t $SESSION_NAME -n "client" -c "$REPO_DIR"
 tmux send-keys -t $SESSION_NAME:client "bash $REPO_DIR/scripts/restart-client.sh" Enter
 
+# Window 3: Agent Manager (omlx + agent HTTP/WS server on port 3001)
+tmux new-window -t $SESSION_NAME -n "agents" -c "$REPO_DIR"
+tmux send-keys -t $SESSION_NAME:agents "bash $REPO_DIR/scripts/start-agents.sh" Enter
+
 echo ""
 echo "=========================================="
 echo "✅ TMux session created: $SESSION_NAME"
@@ -41,6 +45,7 @@ echo "WINDOWS:"
 echo "  tmux attach-session -t $SESSION_NAME:minecraft  # Minecraft Server"
 echo "  tmux attach-session -t $SESSION_NAME:bridge     # Bridge Server"
 echo "  tmux attach-session -t $SESSION_NAME:client     # Rendering Client"
+echo "  tmux attach-session -t $SESSION_NAME:agents     # Agent Manager (http://localhost:3001)"
 echo ""
 echo "OR attach to full session:"
 echo "  tmux attach-session -t $SESSION_NAME"
@@ -49,6 +54,7 @@ echo "KEYBOARD SHORTCUTS (when attached):"
 echo "  Ctrl+B, 0  →  Window 0 (Minecraft)"
 echo "  Ctrl+B, 1  →  Window 1 (Bridge)"
 echo "  Ctrl+B, 2  →  Window 2 (Client)"
+echo "  Ctrl+B, 3  →  Window 3 (Agents)"
 echo "  Ctrl+B, d  →  Detach from session"
 echo "  Ctrl+B, [  →  Scroll mode (Page Up/Down, then q to exit)"
 echo ""
