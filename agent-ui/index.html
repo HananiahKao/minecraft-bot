@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minecraft Agent Manager</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #1a1a1f;
+    --surface: #25252d;
+    --border:  #383848;
+    --accent:  #5c8fff;
+    --green:   #4caf7d;
+    --red:     #e05555;
+    --yellow:  #e0a840;
+    --text:    #e0e0ec;
+    --muted:   #888;
+    --radius:  8px;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  header h1 { font-size: 18px; font-weight: 700; }
+  #ws-status {
+    margin-left: auto;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: #333;
+    color: var(--muted);
+  }
+  #ws-status.connected { background: #1a3a2a; color: var(--green); }
+  #ws-status.error     { background: #3a1a1a; color: var(--red); }
+
+  main { display: grid; grid-template-columns: 340px 1fr; min-height: calc(100vh - 57px); }
+
+  /* Left panel — spawn form + agent list */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  .panel-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 8px; }
+
+  .spawn-form { display: flex; flex-direction: column; gap: 10px; }
+  .spawn-form label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .spawn-form input, .spawn-form textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 9px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .spawn-form input:focus, .spawn-form textarea:focus { border-color: var(--accent); }
+  .spawn-form textarea { resize: vertical; min-height: 70px; }
+
+  button {
+    border: none; border-radius: var(--radius); cursor: pointer;
+    font-size: 13px; font-family: inherit; font-weight: 600;
+    padding: 9px 16px; transition: opacity .15s, filter .15s;
+  }
+  button:hover { filter: brightness(1.12); }
+  button:active { opacity: .8; }
+  button:disabled { opacity: .4; cursor: not-allowed; filter: none; }
+
+  .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+  .btn-stop    { background: var(--red);    color: #fff; font-size: 12px; padding: 5px 10px; }
+  .btn-remove  { background: #444;          color: var(--muted); font-size: 12px; padding: 5px 10px; }
+
+  .agent-list { display: flex; flex-direction: column; gap: 10px; }
+
+  .agent-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+  .agent-card:hover { border-color: #555; }
+  .agent-card.selected { border-color: var(--accent); }
+
+  .agent-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .agent-name { font-weight: 700; font-size: 14px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px;
+    border-radius: 20px; text-transform: uppercase; letter-spacing: .05em;
+  }
+  .badge-running    { background: #1a3a2a; color: var(--green); }
+  .badge-connecting { background: #1a2a3a; color: var(--accent); }
+  .badge-idle       { background: #2a2a2a; color: var(--muted); }
+  .badge-stopped    { background: #2a2a2a; color: var(--muted); }
+  .badge-error      { background: #3a1a1a; color: var(--red); }
+
+  .agent-goal { font-size: 12px; color: var(--muted); margin-bottom: 8px; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .agent-pos  { font-size: 11px; color: #666; font-family: monospace; }
+
+  .agent-card-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+  /* Right panel — detail view */
+  .detail {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+  }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted); gap: 10px;
+  }
+  .empty-state svg { opacity: .25; }
+
+  .detail-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .detail-name { font-size: 22px; font-weight: 800; }
+  .detail-goal { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  .stats-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    min-width: 100px;
+  }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 3px; }
+  .stat-value { font-size: 18px; font-weight: 700; font-family: monospace; }
+
+  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+
+  .log-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    height: 320px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .log-entry { display: flex; gap: 8px; }
+  .log-ts   { color: #555; flex-shrink: 0; }
+  .log-msg  { color: var(--text); word-break: break-word; flex: 1; }
+  .log-msg.warn  { color: var(--yellow); }
+  .log-msg.error { color: var(--red); }
+
+  .inv-grid {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .inv-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-family: monospace;
+  }
+  .inv-item .count { color: var(--accent); font-weight: 700; }
+
+  @media (max-width: 700px) {
+    main { grid-template-columns: 1fr; }
+    .detail { border-top: 1px solid var(--border); }
+    aside { max-height: 50vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <rect x="2" y="2" width="24" height="24" rx="4" fill="#5c8fff" opacity=".18"/>
+    <rect x="6" y="6" width="7" height="7" rx="1.5" fill="#5c8fff"/>
+    <rect x="15" y="6" width="7" height="7" rx="1.5" fill="#4caf7d"/>
+    <rect x="6" y="15" width="7" height="7" rx="1.5" fill="#e0a840"/>
+    <rect x="15" y="15" width="7" height="7" rx="1.5" fill="#e05555"/>
+  </svg>
+  <h1>Minecraft Agent Manager</h1>
+  <div id="ws-status">Connecting…</div>
+</header>
+
+<main>
+  <aside>
+    <div>
+      <div class="panel-title">Spawn New Agent</div>
+      <form class="spawn-form" id="spawn-form">
+        <div>
+          <label for="agent-name">Username (1–16 chars)</label>
+          <input id="agent-name" type="text" placeholder="e.g. MinerBot" maxlength="16" required pattern="[a-zA-Z0-9_]+">
+        </div>
+        <div>
+          <label for="agent-goal">Goal</label>
+          <textarea id="agent-goal" placeholder="e.g. Mine 64 oak logs, then craft a full set of wooden tools and store them in the nearest chest." required></textarea>
+        </div>
+        <button class="btn-primary" type="submit" id="spawn-btn">Spawn Agent</button>
+      </form>
+    </div>
+
+    <div>
+      <div class="panel-title">Active Agents</div>
+      <div class="agent-list" id="agent-list">
+        <div style="color:var(--muted);font-size:13px;padding:8px 0">No agents yet.</div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="detail" id="detail">
+    <div class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+        <rect x="8" y="8" width="20" height="20" rx="3" fill="currentColor"/>
+        <rect x="36" y="8" width="20" height="20" rx="3" fill="currentColor"/>
+        <rect x="8" y="36" width="20" height="20" rx="3" fill="currentColor"/>
+        <rect x="36" y="36" width="20" height="20" rx="3" fill="currentColor"/>
+      </svg>
+      <div>Select an agent to view its logs</div>
+    </div>
+  </div>
+</main>
+
+<script>
+(function() {
+  const WS_URL = `ws://${location.host}/ws`;
+  let ws = null;
+  let agentsMap = {};  // name → snapshot
+  let selectedName = null;
+  let reconnectTimer = null;
+
+  // ── WebSocket ──────────────────────────────────────────────────────────────
+
+  function connect() {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      setWsStatus('connected', 'Live');
+      clearTimeout(reconnectTimer);
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'snapshot') {
+        agentsMap = {};
+        for (const a of msg.agents) agentsMap[a.name] = a;
+        renderList();
+        if (selectedName) renderDetail(agentsMap[selectedName]);
+      } else if (msg.type === 'agent_update') {
+        agentsMap[msg.agent.name] = msg.agent;
+        renderList();
+        if (selectedName === msg.agent.name) renderDetail(msg.agent);
+      } else if (msg.type === 'agent_removed') {
+        delete agentsMap[msg.name];
+        if (selectedName === msg.name) { selectedName = null; showEmpty(); }
+        renderList();
+      }
+    };
+    ws.onclose = () => {
+      setWsStatus('error', 'Disconnected');
+      reconnectTimer = setTimeout(connect, 3000);
+    };
+    ws.onerror = () => setWsStatus('error', 'Error');
+  }
+
+  function setWsStatus(cls, text) {
+    const el = document.getElementById('ws-status');
+    el.className = cls;
+    el.textContent = text;
+  }
+
+  // ── Spawn form ─────────────────────────────────────────────────────────────
+
+  document.getElementById('spawn-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('agent-name').value.trim();
+    const goal = document.getElementById('agent-goal').value.trim();
+    const btn = document.getElementById('spawn-btn');
+    btn.disabled = true;
+    btn.textContent = 'Spawning…';
+    try {
+      const resp = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, goal }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error || 'Failed'); }
+      else {
+        document.getElementById('agent-name').value = '';
+        document.getElementById('agent-goal').value = '';
+      }
+    } catch(err) { alert('Network error: ' + err.message); }
+    btn.disabled = false;
+    btn.textContent = 'Spawn Agent';
+  });
+
+  // ── Render list ────────────────────────────────────────────────────────────
+
+  function renderList() {
+    const list = document.getElementById('agent-list');
+    const agents = Object.values(agentsMap);
+    if (!agents.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">No agents yet.</div>';
+      return;
+    }
+    list.innerHTML = agents.map(a => {
+      const sel = a.name === selectedName ? ' selected' : '';
+      const pos = a.position ? `(${a.position.x}, ${a.position.y}, ${a.position.z})` : '';
+      return `<div class="agent-card${sel}" data-name="${a.name}">
+        <div class="agent-card-header">
+          <span class="agent-name">${esc(a.name)}</span>
+          <span class="badge badge-${a.status}">${a.status}</span>
+        </div>
+        <div class="agent-goal">${esc(a.goal)}</div>
+        ${pos ? `<div class="agent-pos">${pos}</div>` : ''}
+        <div class="agent-card-actions">
+          ${a.status === 'running' || a.status === 'connecting'
+            ? `<button class="btn-stop" data-action="stop" data-name="${a.name}">Stop</button>`
+            : ''}
+          <button class="btn-remove" data-action="remove" data-name="${a.name}">Remove</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('agent-list').addEventListener('click', async (e) => {
+    const card = e.target.closest('.agent-card');
+    if (!card) return;
+
+    const action = e.target.dataset?.action;
+    const name = e.target.dataset?.name || card.dataset.name;
+
+    if (action === 'stop') {
+      e.stopPropagation();
+      await fetch(`/api/agents/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+      return;
+    }
+    if (action === 'remove') {
+      e.stopPropagation();
+      if (confirm(`Remove agent "${name}"?`)) {
+        await fetch(`/api/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      }
+      return;
+    }
+
+    selectedName = name;
+    renderList();
+    renderDetail(agentsMap[name]);
+  });
+
+  // ── Render detail ──────────────────────────────────────────────────────────
+
+  function showEmpty() {
+    document.getElementById('detail').innerHTML = `
+      <div class="empty-state">
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+          <rect x="8" y="8" width="20" height="20" rx="3" fill="currentColor"/>
+          <rect x="36" y="8" width="20" height="20" rx="3" fill="currentColor"/>
+          <rect x="8" y="36" width="20" height="20" rx="3" fill="currentColor"/>
+          <rect x="36" y="36" width="20" height="20" rx="3" fill="currentColor"/>
+        </svg>
+        <div>Select an agent to view its logs</div>
+      </div>`;
+  }
+
+  function renderDetail(a) {
+    if (!a) { showEmpty(); return; }
+    const detail = document.getElementById('detail');
+
+    const pos = a.position;
+    const posStr = pos ? `${pos.x} / ${pos.y} / ${pos.z}` : '—';
+
+    const statsHtml = `
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-label">Health</div><div class="stat-value" style="color:var(--red)">${a.health ?? '—'}</div></div>
+        <div class="stat-box"><div class="stat-label">Food</div><div class="stat-value" style="color:var(--yellow)">${a.food ?? '—'}</div></div>
+        <div class="stat-box" style="flex:1"><div class="stat-label">Position</div><div class="stat-value" style="font-size:13px">${posStr}</div></div>
+      </div>`;
+
+    // Logs (preserve scroll if already at bottom)
+    const prevLog = detail.querySelector('.log-box');
+    const wasAtBottom = prevLog ? (prevLog.scrollHeight - prevLog.clientHeight - prevLog.scrollTop < 30) : true;
+
+    const logsHtml = a.logs.map(l => {
+      const t = new Date(l.ts).toTimeString().slice(0, 8);
+      return `<div class="log-entry"><span class="log-ts">${t}</span><span class="log-msg ${l.level !== 'info' ? l.level : ''}">${esc(l.msg)}</span></div>`;
+    }).join('');
+
+    const invHtml = a.inventory.length
+      ? a.inventory.map(i => `<div class="inv-item"><span class="count">${i.count}</span> ${esc(i.name)}</div>`).join('')
+      : '<span style="color:var(--muted);font-size:13px">Empty</span>';
+
+    detail.innerHTML = `
+      <div class="detail-header">
+        <span class="detail-name">${esc(a.name)}</span>
+        <span class="badge badge-${a.status}">${a.status}</span>
+        ${a.status === 'running' || a.status === 'connecting'
+          ? `<button class="btn-stop" onclick="stopAgent('${esc(a.name)}')">Stop</button>` : ''}
+      </div>
+      <div class="detail-goal">${esc(a.goal)}</div>
+      ${statsHtml}
+      <div>
+        <div class="section-title" style="margin-bottom:8px">Inventory</div>
+        <div class="inv-grid">${invHtml}</div>
+      </div>
+      <div>
+        <div class="section-title" style="margin-bottom:8px">Agent Log</div>
+        <div class="log-box">${logsHtml || '<span style="color:var(--muted)">No logs yet.</span>'}</div>
+      </div>`;
+
+    const logBox = detail.querySelector('.log-box');
+    if (wasAtBottom) logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  window.stopAgent = async (name) => {
+    await fetch(`/api/agents/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+  };
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  connect();
+})();
+</script>
+</body>
+</html>
