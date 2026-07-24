@@ -215,7 +215,7 @@ function initBot() {
     // server's corrected direction and move in the wrong direction.
     bot.on('physicsTick', () => {
       if (_clientYaw !== null && bot.entity) {
-        bot.look(Math.PI - _clientYaw, _clientPitch, true);
+        bot.look(_clientYaw, _clientPitch, true);
       }
     });
     _reconnectDelay = 2000; // reset backoff on successful connection
@@ -934,12 +934,12 @@ wss.on('connection', (ws) => {
         }
 
         // Apply look direction and store for physicsTick re-assertion.
-        // THREE.js euler.y=0 = north (−Z); Minecraft yaw=0 = south (+Z).
-        // Conversion: mcYaw = π − euler.y
+        // THREE.js euler.y and mineflayer yaw share the same convention
+        // (0 = north/−Z, π/2 = west, π = south/+Z) — no conversion needed.
         if (typeof yaw === 'number' && typeof pitch === 'number') {
           _clientYaw = yaw;
           _clientPitch = pitch;
-          bot.look(Math.PI - yaw, pitch, true);
+          bot.look(yaw, pitch, true);
         }
       }
     } catch (e) {
