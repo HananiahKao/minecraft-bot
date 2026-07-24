@@ -144,6 +144,10 @@ let _digInProgress = false;
 let _digTarget = null;
 let _serverCanFly = false;
 let _reconnectScheduled = false;
+// Last look direction sent by the client — re-asserted every physics tick so
+// server position corrections cannot override entity.yaw between messages.
+let _clientYaw = null;
+let _clientPitch = null;
 let _reconnectDelay = 2000; // grows on repeated failures, resets on successful spawn
 
 function scheduleReconnect() {
@@ -205,6 +209,15 @@ function initBot() {
   bot.on('spawn', () => {
     console.log('✅ Bot spawned!');
     if (bot.entity) console.log(`📍 Position: ${bot.entity.position.toString()}`);
+    // Re-assert the client's look direction on every physics tick.
+    // Without this, server position-correction packets override entity.yaw between
+    // player_input messages (every 50 ms), causing the bot to briefly face the
+    // server's corrected direction and move in the wrong direction.
+    bot.on('physicsTick', () => {
+      if (_clientYaw !== null && bot.entity) {
+        bot.look(Math.PI - _clientYaw, _clientPitch, true);
+      }
+    });
     _reconnectDelay = 2000; // reset backoff on successful connection
     botReady = true;
 
@@ -409,6 +422,7 @@ function initBot() {
   bot.on('death', () => {
     console.log('💀 Bot died! Respawning...');
     botReady = false;
+    _clientYaw = null; _clientPitch = null;
     // Stop all movement on death and reset flight state
     stopAllControls();
     setTimeout(() => {
@@ -919,10 +933,12 @@ wss.on('connection', (ws) => {
           }
         }
 
-        // Apply look direction.
+        // Apply look direction and store for physicsTick re-assertion.
         // THREE.js euler.y=0 = north (−Z); Minecraft yaw=0 = south (+Z).
         // Conversion: mcYaw = π − euler.y
         if (typeof yaw === 'number' && typeof pitch === 'number') {
+          _clientYaw = yaw;
+          _clientPitch = pitch;
           bot.look(Math.PI - yaw, pitch, true);
         }
       }
