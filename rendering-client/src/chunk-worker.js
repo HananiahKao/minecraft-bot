@@ -448,14 +448,17 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
       const X0=wx+lx0, Y0=wy+ly0, Z0=wz+lz0;
       const X1=wx+lx1, Y1=wy+ly1, Z1=wz+lz1;
 
-      // Cull a face if the neighbor in that direction is solid.
-      // For model blocks we use a simple check: is the adjacent grid cell solid?
-      const solidNX = isSolid(gi(x-1, y, z));
-      const solidPX = isSolid(gi(x+1, y, z));
-      const solidNY = isSolid(gi(x, y-1, z));
-      const solidPY = isSolid(gi(x, y+1, z));
-      const solidNZ = isSolid(gi(x, y, z-1));
-      const solidPZ = isSolid(gi(x, y, z+1));
+      // Only cull a face when the box geometry actually reaches the block boundary
+      // in that direction AND the adjacent block is solid.  Interior faces (e.g. the
+      // front face of a ladder slab at x/z = 0.1875 or 0.8125) must never be culled
+      // by a neighbour check — the neighbour fills a full block position, not the
+      // partial gap between the slab face and the block edge.
+      const solidNX = lx0 <= 0 && isSolid(gi(x-1, y, z));
+      const solidPX = lx1 >= 1 && isSolid(gi(x+1, y, z));
+      const solidNY = ly0 <= 0 && isSolid(gi(x, y-1, z));
+      const solidPY = ly1 >= 1 && isSolid(gi(x, y+1, z));
+      const solidNZ = lz0 <= 0 && isSolid(gi(x, y, z-1));
+      const solidPZ = lz1 >= 1 && isSolid(gi(x, y, z+1));
 
       // +Y top
       if (!solidPY) pushFace(false, 0,1,0, r,g,b, X0,Y1,Z1, X1,Y1,Z0, X0,Y1,Z0, X0,Y1,Z1, X1,Y1,Z1, X1,Y1,Z0);

@@ -14,6 +14,8 @@ export class InputHandler {
     this.lastMouseMoveTime = 0;
     this._pendingDX = 0;   // accumulated mouse delta since last applyMouseLook()
     this._pendingDY = 0;
+    this._yaw = 0;         // maintained directly to avoid gimbal-lock from quaternion round-trip
+    this._pitch = 0;
     this._flyToggle = false;        // one-shot: true for one send cycle after double-tap Space
     this._lastSpaceTap = 0;         // timestamp of last Space keydown leading edge
     this._breakHeld = false;        // held state: left button held → mine targeted block
@@ -176,10 +178,13 @@ export class InputHandler {
   // Call once per rAF frame — applies all accumulated mouse deltas in one trig pass
   applyMouseLook() {
     if (this._pendingDX === 0 && this._pendingDY === 0) return;
-    this.euler.setFromQuaternion(this.camera.quaternion);
-    this.euler.y -= this._pendingDX * 0.003;
-    this.euler.x -= this._pendingDY * 0.003;
-    this.euler.x = Math.max(-this.pi2, Math.min(this.pi2, this.euler.x));
+    // Store yaw/pitch as plain numbers instead of extracting from the quaternion.
+    // setFromQuaternion(YXZ) hits a gimbal-lock singularity when pitch → ±90°,
+    // forcing euler.y = 0 and resetting the heading regardless of actual direction.
+    this._yaw   -= this._pendingDX * 0.003;
+    this._pitch -= this._pendingDY * 0.003;
+    this._pitch = Math.max(-this.pi2, Math.min(this.pi2, this._pitch));
+    this.euler.set(this._pitch, this._yaw, 0);
     this.camera.quaternion.setFromEuler(this.euler);
     this._pendingDX = 0;
     this._pendingDY = 0;
@@ -206,12 +211,10 @@ export class InputHandler {
   }
 
   getMCYaw() {
-    this.euler.setFromQuaternion(this.camera.quaternion);
-    return this.euler.y;
+    return this._yaw;
   }
 
   getMCPitch() {
-    this.euler.setFromQuaternion(this.camera.quaternion);
-    return -this.euler.x;
+    return -this._pitch;
   }
 }

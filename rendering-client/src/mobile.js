@@ -74,7 +74,7 @@ function injectOverlay(inp) {
   wire('mb-left',   'left');
   wire('mb-right',  'right');
   wire('mb-jump',   'jump');
-  wire('mb-sneak',  'sneak');
+  wire('mb-sneak',  'sneak', true);  // toggle: tap once to hold on ladder, tap again to release
   wire('mb-break',  'breakBlock');
   wire('mb-sprint', 'sprint', true);
   wire('mb-inv',    'inventoryToggle', true);
