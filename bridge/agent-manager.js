@@ -137,7 +137,7 @@ wss.on('connection', (ws) => {
 server.listen(PORT, () => {
   console.log(`Agent Manager running on http://localhost:${PORT}`);
   console.log(`MC server: ${MC_HOST}:${MC_PORT}`);
-  console.log(`OMLX: ${process.env.OMLX_URL ?? 'http://localhost:8000'}`);
+  console.log(`Claude model: ${process.env.CLAUDE_MODEL ?? 'haiku'}`);
 });
 
 // Helpers

@@ -11,10 +11,10 @@ import mineflayer from 'mineflayer';
 import pathfinderPkg from 'mineflayer-pathfinder';
 const { pathfinder, Movements, goals } = pathfinderPkg;
 import { Vec3 } from 'vec3';
+import { spawn } from 'node:child_process';
 
-const OMLX_BASE  = process.env.OMLX_URL   || 'http://localhost:10000';
-const OMLX_KEY   = process.env.OMLX_KEY   || 'omlx';
-const OMLX_MODEL = process.env.OMLX_MODEL || 'Qwen2.5-Coder-7B-Instruct-MLX-4bit';
+const CLAUDE_BIN  = process.env.CLAUDE_BIN  || 'claude';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'haiku';
 const TICK_MS = 2000; // reasoning interval
 const MAX_LOG = 100;  // log lines kept per agent
 
@@ -182,6 +182,35 @@ const ACTION_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'run_command',
+      description: 'Send a chat message or slash command to the Minecraft server. Use for /tp, /give, /gamemode, /say, or any other command.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The full command including slash, e.g. "/tp 100 64 200" or "/give @s diamond 64"' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_block',
+      description: 'Search for the nearest block of a given type within a radius. Returns its position, or "not found".',
+      parameters: {
+        type: 'object',
+        properties: {
+          block_name: { type: 'string', description: 'e.g. "oak_log", "diamond_ore", "crafting_table"' },
+          radius: { type: 'number', description: 'Search radius in blocks (default 32, max 64)' },
+        },
+        required: ['block_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'wait_ticks',
       description: 'Wait/do nothing for a number of game ticks (20 ticks = 1 second).',
       parameters: {
@@ -194,6 +223,24 @@ const ACTION_TOOLS = [
     },
   },
 ];
+
+// Extract all top-level JSON objects from a string (handles nested braces).
+function extractJsonObjects(text) {
+  const results = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '{') { i++; continue; }
+    let depth = 0, j = i;
+    while (j < text.length) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}') { depth--; if (depth === 0) break; }
+      j++;
+    }
+    try { results.push(JSON.parse(text.slice(i, j + 1))); } catch {}
+    i = j + 1;
+  }
+  return results;
+}
 
 const FACE_VEC = {
   top:    new Vec3(0, 1, 0),
@@ -367,7 +414,7 @@ Inventory (${inv.length} types):
 ${inv.length ? inv.map(i => `  ${i.name}: ${i.count}`).join('\n') : '  (empty)'}
 
 Nearby blocks (within 5):
-${nearby.length ? nearby.slice(0, 20).map(b => `  ${b.name} at (${b.x},${b.y},${b.z})`).join('\n') : '  (none notable)'}
+${nearby.length ? nearby.slice(0, 60).map(b => `  ${b.name} at (${b.x},${b.y},${b.z})`).join('\n') : '  (none)'}
 
 Nearby entities (within 16):
 ${entities.length ? entities.map(e => `  ${e.name} at (${e.x.toFixed(0)},${e.y.toFixed(0)},${e.z.toFixed(0)})`).join('\n') : '  (none)'}
@@ -379,12 +426,11 @@ What action do you take next toward your goal?`;
     const bot = this.bot;
     const pos = bot.entity.position.floored();
     const blocks = [];
-    const skip = new Set(['air', 'cave_air', 'void_air', 'grass', 'short_grass', 'dirt', 'stone', 'water', 'lava']);
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dy = -radius; dy <= radius; dy++) {
         for (let dz = -radius; dz <= radius; dz++) {
           const b = bot.blockAt(pos.offset(dx, dy, dz));
-          if (b && !skip.has(b.name)) {
+          if (b && b.name !== 'air' && b.name !== 'cave_air' && b.name !== 'void_air') {
             blocks.push({ name: b.name, x: b.position.x, y: b.position.y, z: b.position.z });
           }
         }
@@ -415,50 +461,129 @@ What action do you take next toward your goal?`;
 
     this._log('Thinking...');
 
-    const resp = await fetch(`${OMLX_BASE}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OMLX_KEY}` },
-      body: JSON.stringify({
-        model: OMLX_MODEL,
-        messages: this._history,
-        tools: ACTION_TOOLS,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 512,
-      }),
-    });
+    const responseText = await this._callClaude(this._history);
 
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`OMLX error ${resp.status}: ${text}`);
-    }
-
-    const data = await resp.json();
-    const msg = data.choices?.[0]?.message;
-    if (!msg) throw new Error('Empty OMLX response');
-
+    const msg = { role: 'assistant', content: responseText };
     this._history.push(msg);
 
-    // Log any assistant text
-    if (msg.content) this._log(`Agent: ${msg.content}`);
+    // Parse tool calls from the text response
+    const toolCalls = this._parseTextToolCalls(responseText);
 
-    // Execute tool calls
-    if (msg.tool_calls?.length) {
-      for (const tc of msg.tool_calls) {
-        const fn = tc.function.name;
-        let args;
-        try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
-        this._log(`Action: ${fn}(${JSON.stringify(args)})`);
-        let result;
-        try {
-          result = await this._executeAction(fn, args);
-        } catch (err) {
-          result = `Error: ${err.message}`;
-          this._log(`Action failed: ${err.message}`, 'warn');
-        }
-        this._history.push({ role: 'tool', tool_call_id: tc.id, content: result });
+    // Log assistant reasoning (strip tool call JSON blocks to keep logs clean)
+    const clean = responseText
+      .replace(/<tool(?:_call)?>([\s\S]*?)<\/tool(?:_call)?>/g, '')
+      .replace(/```[\s\S]*?```/g, '')
+      .trim();
+    if (clean) this._log(`Agent: ${clean}`);
+
+    for (const tc of toolCalls) {
+      this._log(`Action: ${tc.fn}(${JSON.stringify(tc.args)})`);
+      let result;
+      try {
+        result = await this._executeAction(tc.fn, tc.args);
+        this._log(`Result: ${result}`);
+      } catch (err) {
+        result = `Error: ${err.message}`;
+        this._log(`Action failed: ${err.message}`, 'warn');
       }
+      this._history.push({ role: 'user', content: `Action result: ${result}` });
     }
+  }
+
+  // Call the claude CLI subprocess and return the text response.
+  // Formats the conversation history as a single structured prompt.
+  _callClaude(history) {
+    return new Promise((resolve, reject) => {
+      // Build a single text prompt from history (system + prior turns + current obs)
+      const parts = [];
+      const sys = history.find(m => m.role === 'system');
+      if (sys) parts.push(`SYSTEM:\n${sys.content}`);
+
+      const toolList = ACTION_TOOLS.map(t => {
+        const f = t.function;
+        const params = Object.entries(f.parameters?.properties ?? {})
+          .map(([k, v]) => `  ${k} (${v.type}): ${v.description ?? ''}`)
+          .join('\n');
+        return `- ${f.name}: ${f.description}\n${params}`;
+      }).join('\n\n');
+
+      parts.push(`\nAVAILABLE TOOLS:\n${toolList}`);
+      parts.push('\nTo use a tool, output EXACTLY this format (one per action):\n<tool_call>{"name":"tool_name","arguments":{...}}</tool_call>');
+
+      for (const m of history) {
+        if (m.role === 'system') continue;
+        if (m.role === 'user') parts.push(`\nUSER:\n${m.content}`);
+        else if (m.role === 'assistant') parts.push(`\nASSISTANT:\n${m.content}`);
+      }
+
+      const prompt = parts.join('\n');
+
+      // Pass prompt via stdin to avoid conflicts with variadic --allowedTools
+      const proc = spawn(CLAUDE_BIN, [
+        '--print',
+        '--model', CLAUDE_MODEL,
+        '--output-format', 'json',
+        '--allowedTools', 'none',
+      ], { env: { ...process.env } });
+
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d; });
+      proc.stderr.on('data', d => { stderr += d; });
+
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          return reject(new Error(`claude exited ${code}: ${stderr.slice(0, 200)}`));
+        }
+        try {
+          const parsed = JSON.parse(stdout);
+          // claude --output-format json returns { result: "...", ... }
+          const text = parsed.result ?? parsed.text ?? stdout.trim();
+          resolve(text);
+        } catch {
+          // fallback: use raw stdout as text
+          resolve(stdout.trim() || '(no response)');
+        }
+      });
+
+      proc.on('error', reject);
+    });
+  }
+
+  // Parse Qwen-style <tool_call>{"name":...,"arguments":...}</tool_call>
+  // and ```json {"name":...} ``` blocks from assistant text content.
+  _parseTextToolCalls(text) {
+    const calls = [];
+
+    // <tool> or <tool_call> XML tags (omlx 0.5+ / Qwen native format)
+    const xmlRe = /<tool(?:_call)?>([\s\S]*?)<\/tool(?:_call)?>/g;
+    let m;
+    while ((m = xmlRe.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(m[1].trim());
+        if (obj.name) calls.push({ fn: obj.name, args: obj.arguments ?? obj.args ?? {}, id: null });
+      } catch {}
+    }
+    if (calls.length) return calls;
+
+    // Fenced ```json {...}``` blocks
+    const fenceRe = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;
+    while ((m = fenceRe.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(m[1]);
+        if (obj.name) calls.push({ fn: obj.name, args: obj.arguments ?? obj.args ?? {}, id: null });
+      } catch {}
+    }
+    if (calls.length) return calls;
+
+    // Any top-level JSON object in the text (handles nested braces)
+    for (const obj of extractJsonObjects(text)) {
+      if (obj.name) calls.push({ fn: obj.name, args: obj.arguments ?? obj.args ?? {}, id: null });
+    }
+    return calls;
   }
 
   async _executeAction(fn, args) {
@@ -575,6 +700,21 @@ What action do you take next toward your goal?`;
         await bot.lookAt(target.position.offset(0, target.height ?? 1.6, 0));
         bot.attack(target);
         return `Attacked ${target.name}.`;
+      }
+
+      case 'run_command': {
+        await bot.chat(args.command);
+        return `Sent: ${args.command}`;
+      }
+
+      case 'find_block': {
+        const radius = Math.min(args.radius ?? 32, 64);
+        const mcData = bot.registry;
+        const blockType = mcData.blocksByName[args.block_name];
+        if (!blockType) return `Unknown block type: ${args.block_name}`;
+        const found = bot.findBlock({ matching: blockType.id, maxDistance: radius });
+        if (!found) return `No ${args.block_name} found within ${radius} blocks.`;
+        return `Found ${args.block_name} at (${found.x}, ${found.y}, ${found.z})`;
       }
 
       case 'wait_ticks': {
