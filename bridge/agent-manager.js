@@ -1,71 +1,172 @@
 /**
- * Agent Manager — HTTP + WebSocket server for managing autonomous AgentBots.
+ * Agent Manager — HTTP + WebSocket server.
  *
- * HTTP  GET  /api/agents          → list all agents (snapshot)
- * HTTP  POST /api/agents          → spawn new agent { name, goal }
- * HTTP  POST /api/agents/:name/stop → stop an agent
- * HTTP  DELETE /api/agents/:name  → stop + remove an agent
- * WS   ws://…/ws                  → push updates to all connected UIs
+ * Each agent runs as a separate detached child process (agent-runner.js).
+ * The manager survives independently: restarting it does NOT kill running bots.
+ * On startup it reads .agents-registry.json and reconnects to surviving runners.
  *
- * Start: node agent-manager.js
- * Env vars:
- *   PORT      (default 3001)
- *   MC_HOST   (default localhost)
- *   MC_PORT   (default 25565)
- *   OMLX_URL  (default http://localhost:8000)
- *   OMLX_MODEL
+ * Endpoints:
+ *   GET  /api/agents              → list snapshots
+ *   POST /api/agents              → spawn { name, goal }
+ *   POST /api/agents/:name/stop   → stop
+ *   POST /api/agents/:name/message → inject user message
+ *   DELETE /api/agents/:name      → stop + remove
+ *   POST /internal/agent-update   → runner pushes state (internal)
+ *   WS   /ws                      → live updates to UI
  */
 
-import http from 'http';
+import http from 'node:http';
+import net  from 'node:net';
 import { WebSocketServer } from 'ws';
-import { AgentBot } from './agent-bot.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { spawn } from 'node:child_process';
+import fs   from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const PORT    = parseInt(process.env.PORT   ?? '3001');
+const PORT    = parseInt(process.env.PORT    ?? '3001');
 const MC_HOST = process.env.MC_HOST ?? 'localhost';
 const MC_PORT = parseInt(process.env.MC_PORT ?? '25565');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UI_PATH = path.resolve(__dirname, '../agent-ui/index.html');
+const __dirname     = path.dirname(fileURLToPath(import.meta.url));
+const UI_PATH       = path.resolve(__dirname, '../agent-ui/index.html');
+const RUNNER_BIN    = path.join(__dirname, 'agent-runner.js');
+const REGISTRY_PATH = path.join(__dirname, '.agents-registry.json');
 
-const agents = new Map(); // name → AgentBot
-const wsClients = new Set();
+// name → { name, goal, pid, port }
+const agentMeta  = new Map();
+// name → latest snapshot from runner
+const agentState = new Map();
+const wsClients  = new Set();
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function broadcast(data) {
   const str = JSON.stringify(data);
-  for (const ws of wsClients) {
-    if (ws.readyState === 1) ws.send(str);
-  }
+  for (const ws of wsClients) if (ws.readyState === 1) ws.send(str);
 }
 
 function allSnapshots() {
-  return [...agents.values()].map(a => a.snapshot());
+  return [...agentState.values()];
 }
 
-// HTTP handler
+function readRegistry() {
+  try { return JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8')); } catch { return {}; }
+}
+
+function removeFromRegistry(name) {
+  try {
+    const reg = readRegistry();
+    delete reg[name];
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(reg, null, 2));
+  } catch {}
+}
+
+async function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', reject);
+  });
+}
+
+async function fetchRunner(port, path, method = 'GET', body) {
+  return new Promise((resolve, reject) => {
+    const bodyStr = body ? JSON.stringify(body) : undefined;
+    const req = http.request({
+      hostname: '127.0.0.1', port, path, method,
+      headers: { 'Content-Type': 'application/json', ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}) },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    });
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+// ── Reconnect survivors on startup ────────────────────────────────────────────
+
+async function reconnectSurvivors() {
+  const reg = readRegistry();
+  for (const [name, meta] of Object.entries(reg)) {
+    try {
+      const snapshot = await fetchRunner(meta.port, '/state');
+      agentMeta.set(name, meta);
+      agentState.set(name, snapshot);
+      console.log(`↩  Reconnected to ${name} (port ${meta.port}, pid ${meta.pid})`);
+    } catch {
+      console.log(`✗  ${name} not responding on port ${meta.port} — removing from registry`);
+      removeFromRegistry(name);
+    }
+  }
+}
+
+// ── Spawn a new agent runner ──────────────────────────────────────────────────
+
+async function spawnAgent(name, goal) {
+  // Pre-allocate a port so we know it before the child starts.
+  // The child binds to exactly this port — no stdout handshake needed.
+  const runnerPort = await getFreePort();
+
+  const child = spawn(process.execPath, [
+    RUNNER_BIN,
+    '--name',         name,
+    '--goal',         goal,
+    '--mc-host',      MC_HOST,
+    '--mc-port',      String(MC_PORT),
+    '--manager-port', String(PORT),
+    '--runner-port',  String(runnerPort),
+  ], {
+    detached: true,
+    stdio: 'ignore',  // fully detached — no pipe death on manager restart
+  });
+
+  child.unref();
+
+  const meta = { name, goal, pid: child.pid, port: runnerPort };
+  agentMeta.set(name, meta);
+  return meta;
+}
+
+// ── HTTP server ───────────────────────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
-  // Serve the UI
+  // Serve UI (always read fresh from disk — no restart needed for HTML changes)
   if (pathname === '/' || pathname === '/index.html') {
-    if (!fs.existsSync(UI_PATH)) {
-      res.writeHead(404); res.end('agent-ui/index.html not found');
-      return;
-    }
+    if (!fs.existsSync(UI_PATH)) { res.writeHead(404); res.end('UI not found'); return; }
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(fs.readFileSync(UI_PATH));
     return;
   }
 
-  // CORS for local dev
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // Internal: runner pushes state updates here
+  if (pathname === '/internal/agent-update' && req.method === 'POST') {
+    readBody(req, (body) => {
+      try {
+        const snapshot = JSON.parse(body);
+        const name = snapshot.name;
+        if (name) {
+          agentState.set(name, snapshot);
+          broadcast({ type: 'agent_update', agent: snapshot });
+        }
+      } catch {}
+      res.writeHead(204); res.end();
+    });
+    return;
+  }
 
   // GET /api/agents
   if (pathname === '/api/agents' && req.method === 'GET') {
@@ -75,24 +176,31 @@ const server = http.createServer((req, res) => {
 
   // POST /api/agents — spawn
   if (pathname === '/api/agents' && req.method === 'POST') {
-    readBody(req, (body) => {
+    readBody(req, async (body) => {
       let data;
       try { data = JSON.parse(body); } catch { err(res, 400, 'Invalid JSON'); return; }
       const { name, goal } = data;
       if (!name || !goal) { err(res, 400, 'name and goal required'); return; }
-      if (!/^[a-zA-Z0-9_]{1,16}$/.test(name)) { err(res, 400, 'name must be 1-16 alphanumeric/underscore chars'); return; }
-      if (agents.has(name) && agents.get(name).status === 'running') {
-        err(res, 409, `Agent "${name}" already running`); return;
+      if (!/^[a-zA-Z0-9_]{1,16}$/.test(name)) { err(res, 400, 'invalid name'); return; }
+      const existing = agentMeta.get(name);
+      if (existing) {
+        try {
+          const state = await fetchRunner(existing.port, '/state');
+          if (state.status === 'running' || state.status === 'connecting') {
+            err(res, 409, `Agent "${name}" already running`); return;
+          }
+        } catch {}
       }
 
-      const agent = new AgentBot({ name, goal, mcHost: MC_HOST, mcPort: MC_PORT });
-      agent.onUpdate((snapshot) => {
-        broadcast({ type: 'agent_update', agent: snapshot });
-      });
-      agents.set(name, agent);
-      agent.start();
-
-      json(res, { ok: true, agent: agent.snapshot() }, 201);
+      try {
+        const meta = await spawnAgent(name, goal);
+        // Seed state map with a placeholder so UI shows it immediately
+        agentState.set(name, { name, goal, status: 'connecting', goalDone: false, logs: [], position: null, health: null, food: null, inventory: [] });
+        broadcast({ type: 'agent_update', agent: agentState.get(name) });
+        json(res, { ok: true, name, port: meta.port }, 201);
+      } catch (spawnErr) {
+        err(res, 500, `Spawn failed: ${spawnErr.message}`);
+      }
     });
     return;
   }
@@ -101,24 +209,24 @@ const server = http.createServer((req, res) => {
   const stopMatch = pathname.match(/^\/api\/agents\/([^/]+)\/stop$/);
   if (stopMatch && req.method === 'POST') {
     const name = decodeURIComponent(stopMatch[1]);
-    const agent = agents.get(name);
-    if (!agent) { err(res, 404, 'Agent not found'); return; }
-    agent.stop();
+    const meta = agentMeta.get(name);
+    if (!meta) { err(res, 404, 'Agent not found'); return; }
+    fetchRunner(meta.port, '/stop', 'POST').catch(() => {});
     json(res, { ok: true });
     return;
   }
 
-  // POST /api/agents/:name/message — inject a user message into the agent's reasoning
+  // POST /api/agents/:name/message
   const msgMatch = pathname.match(/^\/api\/agents\/([^/]+)\/message$/);
   if (msgMatch && req.method === 'POST') {
     const name = decodeURIComponent(msgMatch[1]);
-    const agent = agents.get(name);
-    if (!agent) { err(res, 404, 'Agent not found'); return; }
+    const meta = agentMeta.get(name);
+    if (!meta) { err(res, 404, 'Agent not found'); return; }
     readBody(req, (body) => {
       let data;
       try { data = JSON.parse(body); } catch { err(res, 400, 'Invalid JSON'); return; }
       if (!data.message) { err(res, 400, 'message required'); return; }
-      agent.injectMessage(data.message);
+      fetchRunner(meta.port, '/message', 'POST', { message: data.message }).catch(() => {});
       json(res, { ok: true });
     });
     return;
@@ -128,10 +236,12 @@ const server = http.createServer((req, res) => {
   const delMatch = pathname.match(/^\/api\/agents\/([^/]+)$/);
   if (delMatch && req.method === 'DELETE') {
     const name = decodeURIComponent(delMatch[1]);
-    const agent = agents.get(name);
-    if (!agent) { err(res, 404, 'Agent not found'); return; }
-    agent.stop();
-    agents.delete(name);
+    const meta = agentMeta.get(name);
+    if (!meta) { err(res, 404, 'Agent not found'); return; }
+    fetchRunner(meta.port, '/stop', 'POST').catch(() => {});
+    agentMeta.delete(name);
+    agentState.delete(name);
+    removeFromRegistry(name);
     broadcast({ type: 'agent_removed', name });
     json(res, { ok: true });
     return;
@@ -140,23 +250,27 @@ const server = http.createServer((req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-// WebSocket
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
   wsClients.add(ws);
-  // Send current state immediately
   ws.send(JSON.stringify({ type: 'snapshot', agents: allSnapshots() }));
   ws.on('close', () => wsClients.delete(ws));
 });
 
-server.listen(PORT, () => {
+// ── Start ─────────────────────────────────────────────────────────────────────
+
+server.listen(PORT, async () => {
   console.log(`Agent Manager running on http://localhost:${PORT}`);
   console.log(`MC server: ${MC_HOST}:${MC_PORT}`);
   console.log(`Claude model: ${process.env.CLAUDE_MODEL ?? 'haiku'}`);
+  await reconnectSurvivors();
+  // Broadcast restored state to any early WS connections
+  broadcast({ type: 'snapshot', agents: allSnapshots() });
 });
 
-// Helpers
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
