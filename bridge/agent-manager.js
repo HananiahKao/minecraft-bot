@@ -108,6 +108,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/agents/:name/message — inject a user message into the agent's reasoning
+  const msgMatch = pathname.match(/^\/api\/agents\/([^/]+)\/message$/);
+  if (msgMatch && req.method === 'POST') {
+    const name = decodeURIComponent(msgMatch[1]);
+    const agent = agents.get(name);
+    if (!agent) { err(res, 404, 'Agent not found'); return; }
+    readBody(req, (body) => {
+      let data;
+      try { data = JSON.parse(body); } catch { err(res, 400, 'Invalid JSON'); return; }
+      if (!data.message) { err(res, 400, 'message required'); return; }
+      agent.injectMessage(data.message);
+      json(res, { ok: true });
+    });
+    return;
+  }
+
   // DELETE /api/agents/:name
   const delMatch = pathname.match(/^\/api\/agents\/([^/]+)$/);
   if (delMatch && req.method === 'DELETE') {

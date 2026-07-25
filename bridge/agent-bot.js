@@ -285,6 +285,7 @@ export class AgentBot {
       name: this.name,
       goal: this.goal,
       status: this.status,
+      goalDone: this._goalDone ?? false,
       logs: this.logs,
       position: pos ? { x: Math.round(pos.x * 10) / 10, y: Math.round(pos.y * 10) / 10, z: Math.round(pos.z * 10) / 10 } : null,
       health: this.bot?.health ?? null,
@@ -370,6 +371,13 @@ export class AgentBot {
     this._tickTimer = setTimeout(() => this._tick(), TICK_MS);
   }
 
+  // Inject a follow-up instruction from the user into the agent's next tick.
+  injectMessage(text) {
+    this._pendingUserMessage = text;
+    this._log(`[User] ${text}`);
+    this._emit();
+  }
+
   _initHistory() {
     const system = `You are an autonomous Minecraft agent named "${this.name}".
 Your goal: ${this.goal}
@@ -379,11 +387,14 @@ Use the provided tools to interact with the Minecraft world. Each tool call take
 Important:
 - When mining, equip the right tool first (e.g. pickaxe for stone/ore, axe for wood).
 - When pathfinding fails, try a nearby position instead.
-- If you reach the goal, call wait_ticks with a long duration and describe completion in your message.
+- If you have fully completed the goal, say "GOAL COMPLETE:" followed by a summary, then call wait_ticks.
 - Prefer crafting tables for recipes that require 3x3; use 2x2 for simple recipes.
-- You are in survival mode — manage food/health if needed.`;
+- You are in survival mode — manage food/health if needed.
+- Never report success unless you have actually performed and confirmed the actions.`;
 
     this._history = [{ role: 'system', content: system }];
+    this._pendingUserMessage = null;
+    this._goalDone = false;
   }
 
   async _tick() {
@@ -451,10 +462,14 @@ What action do you take next toward your goal?`;
   }
 
   async _reasonAndAct() {
-    const obs = this._buildObservation();
+    let obs = this._buildObservation();
+    if (this._pendingUserMessage) {
+      obs += `\n\n⚡ NEW INSTRUCTION FROM USER: ${this._pendingUserMessage}`;
+      this._pendingUserMessage = null;
+    }
     this._history.push({ role: 'user', content: obs });
 
-    // Trim history to last 10 exchanges (keep system prompt)
+    // Keep system prompt + last 20 messages (10 exchanges)
     if (this._history.length > 22) {
       this._history = [this._history[0], ...this._history.slice(-20)];
     }
@@ -475,6 +490,13 @@ What action do you take next toward your goal?`;
       .replace(/```[\s\S]*?```/g, '')
       .trim();
     if (clean) this._log(`Agent: ${clean}`);
+
+    // Detect goal completion signal
+    if (!this._goalDone && /GOAL COMPLETE:/i.test(responseText)) {
+      this._goalDone = true;
+      this._log('✅ Agent reported goal complete!', 'done');
+      this._emit();
+    }
 
     for (const tc of toolCalls) {
       this._log(`Action: ${tc.fn}(${JSON.stringify(tc.args)})`);
@@ -714,7 +736,8 @@ What action do you take next toward your goal?`;
         if (!blockType) return `Unknown block type: ${args.block_name}`;
         const found = bot.findBlock({ matching: blockType.id, maxDistance: radius });
         if (!found) return `No ${args.block_name} found within ${radius} blocks.`;
-        return `Found ${args.block_name} at (${found.x}, ${found.y}, ${found.z})`;
+        const p = found.position ?? found;
+        return `Found ${args.block_name} at (${p.x}, ${p.y}, ${p.z})`;
       }
 
       case 'wait_ticks': {
