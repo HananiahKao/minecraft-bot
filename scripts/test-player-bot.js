@@ -15,33 +15,42 @@ const bot = mineflayer.createBot({
 
 bot.once('spawn', () => {
   console.log(`✅ TestPlayer spawned at ${bot.entity.position}`);
-  console.log('Bot is online — press Ctrl+C to disconnect');
 
-  // Walk in a small square using control keys
-  const sequence = [
-    ['forward', 1500],
-    ['forward', false],
-    ['right', 1500],
-    ['right', false],
-    ['back', 1500],
-    ['back', false],
-    ['left', 1500],
-    ['left', false],
-  ];
-
-  let i = 0;
-  const step = () => {
-    if (i >= sequence.length) { i = 0; }
-    const [key, val] = sequence[i++];
-    if (val === false) {
-      bot.clearControlStates();
-      setTimeout(step, 300);
-    } else {
-      bot.setControlState(key, true);
-      setTimeout(step, val);
+  setTimeout(async () => {
+    // Find the nearest log block within 5 blocks
+    const pos = bot.entity.position;
+    let target = null;
+    for (let dx = -5; dx <= 5 && !target; dx++) {
+      for (let dy = -2; dy <= 5 && !target; dy++) {
+        for (let dz = -5; dz <= 5 && !target; dz++) {
+          const b = bot.blockAt(pos.offset(dx, dy, dz));
+          if (b && b.name.includes('log')) target = b;
+        }
+      }
     }
-  };
-  setTimeout(step, 1000);
+
+    if (target) {
+      console.log(`🪓 Found ${target.name} at ${target.position} — digging...`);
+      try {
+        await bot.dig(target);
+        console.log('✅ Dug the log!');
+      } catch (e) {
+        console.log('dig error:', e.message);
+      }
+    } else {
+      // No tree found — dig the block below feet instead
+      const below = bot.blockAt(pos.offset(0, -1, 0));
+      console.log(`⛏️  No log nearby — digging ground block: ${below?.name}`);
+      if (below && below.name !== 'air' && below.name !== 'bedrock') {
+        try {
+          await bot.dig(below);
+          console.log('✅ Dug the ground!');
+        } catch (e) {
+          console.log('dig error:', e.message);
+        }
+      }
+    }
+  }, 2000);
 });
 
 bot.on('error', (err) => console.error('Bot error:', err.message));

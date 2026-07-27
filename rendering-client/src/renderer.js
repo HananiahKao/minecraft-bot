@@ -169,13 +169,43 @@ export class MinecraftRenderer {
       return;
     }
     const hit = hits[0];
-    const n = hit.face.normal;
-    // Step slightly inside the hit face to land in the correct block
-    const bx = Math.floor(hit.point.x - n.x * 0.5);
-    const by = Math.floor(hit.point.y - n.y * 0.5);
-    const bz = Math.floor(hit.point.z - n.z * 0.5);
+    const gn = hit.face.normal;
+
+    // Block position: step a tiny amount inward along the face normal so we
+    // land inside the block that owns this face. Use 0.01 (not 0.5) so it
+    // works for both full-block faces (hit.point at integer boundary) AND
+    // interior model-block faces (ladder front at z+0.8125, etc.). A 0.5
+    // step overshoots interior faces and returns the wrong block.
+    const E = 0.01;
+    const bx = Math.floor(hit.point.x - gn.x * E);
+    const by = Math.floor(hit.point.y - gn.y * E);
+    const bz = Math.floor(hit.point.z - gn.z * E);
     this.targetedBlock = { x: bx, y: by, z: bz };
-    this.targetedFace = { x: n.x, y: n.y, z: n.z };
+
+    // Face direction: normally the geometry normal is correct. But thin model
+    // blocks (ladders, torches, rails …) have a visible face whose normal
+    // points away from the wall, so clicking the side still returns the front
+    // face normal. Detect this: if the geometry normal faces AWAY from the
+    // camera (dot product with -ray_dir ≤ 0) it isn't the approach face.
+    // In that case, derive the face from the dominant ray axis instead.
+    const rd = this._raycaster.ray.direction;
+    // A real face the ray head-on should have dot(gn, -rd) close to 1.
+    // Thin model blocks (ladders, rails, torches) expose a face whose normal
+    // is nearly perpendicular to the ray when clicked from the side, so the
+    // dot product is small. Use 0.5 as threshold (≈60°) so side-clicks on
+    // thin blocks fall through to the dominant-ray fallback.
+    const facesCamera = -(gn.x * rd.x + gn.y * rd.y + gn.z * rd.z) > 0.5;
+    let fn;
+    if (facesCamera) {
+      fn = { x: gn.x, y: gn.y, z: gn.z };
+    } else {
+      const ax = Math.abs(rd.x), ay = Math.abs(rd.y), az = Math.abs(rd.z);
+      if (ax >= ay && ax >= az)      fn = { x: rd.x < 0 ? 1 : -1, y: 0, z: 0 };
+      else if (ay >= ax && ay >= az) fn = { x: 0, y: rd.y < 0 ? 1 : -1, z: 0 };
+      else                           fn = { x: 0, y: 0, z: rd.z < 0 ? 1 : -1 };
+    }
+    this.targetedFace = fn;
+
     this._highlightMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
     this._highlightMesh.visible = true;
   }

@@ -603,7 +603,15 @@ function startUpdateLoop() {
 
     const fpsStr = `${_currentFps} FPS`;
     const tb = renderer.targetedBlock;
-    const targetStr = tb ? ` | ${tb.x} ${tb.y} ${tb.z}` : '';
+    let targetStr = '';
+    if (tb) {
+      const cx = Math.floor(tb.x / 16);
+      const cz = Math.floor(tb.z / 16);
+      const lx = ((tb.x % 16) + 16) % 16;
+      const lz = ((tb.z % 16) + 16) % 16;
+      const bname = _chunkBlockData.get(`${cx},${cz}`)?.get(`${lx},${tb.y},${lz}`) ?? '?';
+      targetStr = ` | ${bname} (${tb.x} ${tb.y} ${tb.z})`;
+    }
     if (chunkQueue.length > 0 || unloadQueue.length > 0) {
       updateStatus(`🎮 ${fpsStr} | Chunks: ${renderer.loadedChunks} (+${chunkQueue.length} load, -${unloadQueue.length} unload)${targetStr}`);
     } else {
