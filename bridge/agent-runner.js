@@ -96,8 +96,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/stop') {
-    agent.stop();
     res.end('{"ok":true}');
+    agent.onUpdate(() => {}); // suppress push during shutdown so manager state stays clean
+    agent.stop();
+    setTimeout(() => process.exit(0), 200);
     return;
   }
 
