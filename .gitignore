@@ -72,3 +72,4 @@ yarn.lock
 # macOS
 .AppleDouble
 .LSOverride
+.agents-registry.json
