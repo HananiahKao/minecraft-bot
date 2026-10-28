@@ -96,8 +96,8 @@ function init() {
     onWindowOpen,
     onWindowClose,
     onWindowUpdate,
-    (msg) => entityManager && (msg.kind === 'item' ? entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName) : entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username)),
-    (msg) => entityManager && (entityManager.moveItem(msg.id, msg.x, msg.y, msg.z) || entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw)),
+    (msg) => entityManager && (msg.kind === 'item' ? entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName) : entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username, msg.pitch)),
+    (msg) => entityManager && (entityManager.moveItem(msg.id, msg.x, msg.y, msg.z) || entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw, msg.pitch)),
     (id)  => entityManager && entityManager.destroy(id),
   );
 
@@ -483,13 +483,13 @@ function startUpdateLoop() {
         else if (msg.type === 'entity_spawn') {
           if (entityManager) {
             if (msg.kind === 'item') entityManager.spawnItem(msg.id, msg.x, msg.y, msg.z, msg.itemName);
-            else entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username);
+            else entityManager.spawnMob(msg.id, msg.mobType, msg.x, msg.y, msg.z, msg.yaw, msg.username, msg.pitch);
           }
         }
         else if (msg.type === 'entity_move') {
           if (entityManager) {
             if (!entityManager.moveItem(msg.id, msg.x, msg.y, msg.z))
-              entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw);
+              entityManager.moveMob(msg.id, msg.x, msg.y, msg.z, msg.yaw, msg.pitch);
           }
         }
         else if (msg.type === 'entity_destroy')   { if (entityManager) entityManager.destroy(msg.id); }

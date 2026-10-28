@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildMobModel, animateWalk } from './mob-model.js';
 
 // Item color lookup — same palette as chunk-worker BLOCK_COLORS, just a subset
 const ITEM_COLORS = {
@@ -127,6 +128,66 @@ const MOB_DIMS = {
 };
 const DEFAULT_DIMS = [0.6, 1.0, 0.6, 0.5];
 
+// --- Real-model/texture assets (extracted from prismarine-viewer +
+// minecraft-assets, see scripts/extract-assets/). Loaded once at module
+// init; anything not listed in the manifest — or any entity spawned
+// before this load resolves — stays on the legacy colored-box/cube path
+// below, which remains fully intact as the fallback. ---
+let _manifest = null;
+const _mobGeoCache = new Map(); // mobType -> trimmed geometry JSON
+const _mobMaterialCache = new Map(); // mobType -> shared THREE.MeshLambertMaterial
+const _itemMaterialCache = new Map(); // itemName -> shared THREE.MeshLambertMaterial
+const _textureLoader = new THREE.TextureLoader();
+
+function loadMinecraftTexture(url, onLoad) {
+  _textureLoader.load(url, (tex) => {
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.flipY = false;
+    onLoad(tex);
+  });
+}
+
+function getMobMaterial(mobType) {
+  let mat = _mobMaterialCache.get(mobType);
+  if (mat) return mat;
+  mat = new THREE.MeshLambertMaterial({ transparent: true, alphaTest: 0.1 });
+  _mobMaterialCache.set(mobType, mat);
+  loadMinecraftTexture(`/assets/textures/entity/${mobType}.png`, (tex) => {
+    mat.map = tex;
+    mat.needsUpdate = true;
+  });
+  return mat;
+}
+
+function getItemMaterial(itemName) {
+  let mat = _itemMaterialCache.get(itemName);
+  if (mat) return mat;
+  mat = new THREE.MeshLambertMaterial({ transparent: true, alphaTest: 0.1 });
+  _itemMaterialCache.set(itemName, mat);
+  loadMinecraftTexture(`/assets/textures/items/${itemName}.png`, (tex) => {
+    mat.map = tex;
+    mat.needsUpdate = true;
+  });
+  return mat;
+}
+
+const _assetsReady = (async () => {
+  try {
+    const res = await fetch('/assets/manifest.json');
+    if (!res.ok) return;
+    const manifest = await res.json();
+    await Promise.all(manifest.mobs.map(async (name) => {
+      const r = await fetch(`/assets/mobs/${name}.json`);
+      if (r.ok) _mobGeoCache.set(name, await r.json());
+    }));
+    _manifest = manifest;
+  } catch (e) {
+    console.warn('Mob/item asset manifest failed to load — using legacy colored boxes:', e);
+  }
+})();
+void _assetsReady;
+
 function makeNameplate(label) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -156,7 +217,7 @@ function makeNameplate(label) {
   return sprite;
 }
 
-function makeMobMesh(mobType, displayName) {
+function makeLegacyBoxMesh(mobType, displayName) {
   const [bw, bh, bd, hs] = MOB_DIMS[mobType] || DEFAULT_DIMS;
   const color = MOB_COLORS[mobType] ?? DEFAULT_MOB_COLOR;
   const mat = new THREE.MeshLambertMaterial({ color });
@@ -182,14 +243,35 @@ function makeMobMesh(mobType, displayName) {
     topY = bh + hs;
   }
 
-  // Nameplate floats 0.3 blocks above the top of the model
   if (mobType) {
     const nameplate = makeNameplate(displayName.replace(/_/g, ' '));
     nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
     group.add(nameplate);
   }
 
-  return group;
+  return { group, bones: null, topY };
+}
+
+// Real model path: only taken when the manifest + this mob's geometry JSON
+// are both already loaded (see _assetsReady above). Anything else — a mob
+// absent from the manifest, or one that hasn't finished loading yet —
+// falls through to the legacy colored box, unchanged from today.
+function makeMobMesh(mobType, displayName) {
+  const hasRealModel = _manifest && _manifest.mobs.includes(mobType) && _mobGeoCache.has(mobType);
+  if (!hasRealModel) return makeLegacyBoxMesh(mobType, displayName);
+
+  const mobJson = _mobGeoCache.get(mobType);
+  const material = getMobMaterial(mobType);
+  const { root, bones } = buildMobModel(mobJson, material);
+
+  const bbox = new THREE.Box3().setFromObject(root);
+  const topY = bbox.max.y;
+
+  const nameplate = makeNameplate(displayName.replace(/_/g, ' '));
+  nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
+  root.add(nameplate);
+
+  return { group: root, bones, topY };
 }
 
 export class EntityManager {
@@ -208,14 +290,19 @@ export class EntityManager {
   spawnItem(id, x, y, z, itemName) {
     if (this._items.has(id)) this.destroy(id);
 
-    const color = ITEM_COLORS[itemName] ?? DEFAULT_ITEM_COLOR;
-    if (!(itemName in ITEM_COLORS)) this.unknownItems.add(itemName);
-    const mat = new THREE.MeshLambertMaterial({ color });
+    const hasRealTexture = _manifest && _manifest.items.includes(itemName);
+    if (!(itemName in ITEM_COLORS) && !hasRealTexture) this.unknownItems.add(itemName);
+
+    // Shared per-type material when we have a real texture (never disposed
+    // per-instance — see destroy()); otherwise today's flat-color material.
+    const mat = hasRealTexture
+      ? getItemMaterial(itemName)
+      : new THREE.MeshLambertMaterial({ color: ITEM_COLORS[itemName] ?? DEFAULT_ITEM_COLOR });
     const mesh = new THREE.Mesh(_geo, mat);
     // Float 0.1 blocks above ground centre
     mesh.position.set(x, y + 0.1, z);
     this._scene.add(mesh);
-    this._items.set(id, { mesh, itemName });
+    this._items.set(id, { mesh, itemName, sharedMaterial: hasRealTexture });
   }
 
   moveItem(id, x, y, z) {
@@ -225,22 +312,39 @@ export class EntityManager {
     return true;
   }
 
-  spawnMob(id, mobType, x, y, z, yaw, username) {
+  spawnMob(id, mobType, x, y, z, yaw, username, pitch) {
     if (this._mobs.has(id)) this.destroyMob(id);
-    if (!(mobType in MOB_COLORS)) this.unknownMobs.add(mobType);
+    if (!(mobType in MOB_COLORS) && !(_manifest && _manifest.mobs.includes(mobType))) {
+      this.unknownMobs.add(mobType);
+    }
     const displayName = (mobType === 'player' && username) ? username : mobType;
-    const group = makeMobMesh(mobType, displayName);
+    const { group, bones } = makeMobMesh(mobType, displayName);
     group.position.set(x, y, z);
     group.rotation.y = yaw || 0;
     this._scene.add(group);
-    this._mobs.set(id, { group, mobType });
+    this._mobs.set(id, {
+      group, mobType, bones,
+      walk: { lastPos: new THREE.Vector2(x, z), speed: 0, pos: 0 }
+    });
+    if (bones && pitch != null) this._applyHeadPitch(bones, pitch);
   }
 
-  moveMob(id, x, y, z, yaw) {
+  moveMob(id, x, y, z, yaw, pitch) {
     const entry = this._mobs.get(id);
     if (!entry) return;
     entry.group.position.set(x, y, z);
     if (yaw != null) entry.group.rotation.y = yaw;
+    if (entry.bones && pitch != null) this._applyHeadPitch(entry.bones, pitch);
+  }
+
+  // Head pitch only (nod up/down) — applied immediately, no easing needed.
+  // Independent head *yaw* (swiveling left/right from the body) would need
+  // a separate protocol event mineflayer doesn't track automatically; out
+  // of scope for now (see plan notes).
+  _applyHeadPitch(bones, pitch) {
+    const head = bones.get('head');
+    if (!head) return;
+    head.rotation.x = -pitch;
   }
 
   destroyMob(id) {
@@ -249,10 +353,9 @@ export class EntityManager {
     this._scene.remove(entry.group);
     entry.group.traverse(obj => {
       if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (obj.material.map) obj.material.map.dispose();
-        obj.material.dispose();
-      }
+      // Materials/textures for real models are shared per mob-type caches
+      // (see getMobMaterial) and must outlive any single instance's
+      // despawn — only per-instance geometry is disposed here.
     });
     this._mobs.delete(id);
   }
@@ -262,7 +365,7 @@ export class EntityManager {
     const item = this._items.get(id);
     if (item) {
       this._scene.remove(item.mesh);
-      item.mesh.material.dispose();
+      if (!item.sharedMaterial) item.mesh.material.dispose();
       this._items.delete(id);
       return;
     }
@@ -275,6 +378,14 @@ export class EntityManager {
     for (const { mesh } of this._items.values()) {
       mesh.rotation.y += ROT;
     }
+
+    for (const entry of this._mobs.values()) {
+      if (!entry.bones) continue;
+      const { group, walk } = entry;
+      const moved = Math.hypot(group.position.x - walk.lastPos.x, group.position.z - walk.lastPos.y);
+      walk.lastPos.set(group.position.x, group.position.z);
+      animateWalk(entry.bones, walk, dt, moved);
+    }
   }
 
   // Remove all entities (e.g. on bot reconnect / dimension change)
@@ -282,7 +393,7 @@ export class EntityManager {
     for (const id of [...this._items.keys()]) {
       const item = this._items.get(id);
       this._scene.remove(item.mesh);
-      item.mesh.material.dispose();
+      if (!item.sharedMaterial) item.mesh.material.dispose();
       this._items.delete(id);
     }
     for (const id of [...this._mobs.keys()]) this.destroyMob(id);

@@ -340,6 +340,7 @@ function initBot() {
       y: entity.position.y,
       z: entity.position.z,
       yaw: entity.yaw || 0,
+      pitch: entity.pitch || 0,
     });
   });
 
@@ -369,6 +370,7 @@ function initBot() {
         y: entity.position.y,
         z: entity.position.z,
         yaw: entity.yaw || 0,
+        pitch: entity.pitch || 0,
       });
     }
   });
