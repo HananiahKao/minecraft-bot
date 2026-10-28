@@ -1,0 +1,8 @@
+{
+  "name": "extract-assets-scratch",
+  "private": true,
+  "description": "Throwaway one-off script to extract mob geometry + textures for rendering-client. Not part of the runtime app — delete this directory after running extract.js.",
+  "dependencies": {
+    "minecraft-assets": "^1.19.0"
+  }
+}
