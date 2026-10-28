@@ -139,12 +139,16 @@ const _mobMaterialCache = new Map(); // mobType -> shared THREE.MeshLambertMater
 const _itemMaterialCache = new Map(); // itemName -> shared THREE.MeshLambertMaterial
 const _textureLoader = new THREE.TextureLoader();
 
-function loadMinecraftTexture(url, onLoad) {
+function loadMinecraftTexture(url, flipY, onLoad) {
   _textureLoader.load(url, (tex) => {
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.NearestFilter;
-    tex.flipY = false;
+    tex.flipY = flipY;
     onLoad(tex);
+  }, undefined, (err) => {
+    // Left untextured (plain grey MeshLambertMaterial) rather than crashing
+    // — the shape is still correct, just missing its skin/icon.
+    console.warn(`Failed to load texture ${url}:`, err);
   });
 }
 
@@ -153,11 +157,17 @@ function getMobMaterial(mobType) {
   if (mat) return mat;
   mat = new THREE.MeshLambertMaterial({ transparent: true, alphaTest: 0.1 });
   _mobMaterialCache.set(mobType, mat);
-  loadMinecraftTexture(`/assets/textures/entity/${mobType}.png`, (tex) => {
+  // mob-model.js's UV unwrap (ported from prismarine-viewer's Entity.js)
+  // assumes flipY=false.
+  loadMinecraftTexture(`/assets/textures/entity/${mobType}.png`, false, (tex) => {
     mat.map = tex;
     mat.needsUpdate = true;
   });
   return mat;
+}
+
+function _sharedMobMaterials() {
+  return new Set(_mobMaterialCache.values());
 }
 
 function getItemMaterial(itemName) {
@@ -165,7 +175,11 @@ function getItemMaterial(itemName) {
   if (mat) return mat;
   mat = new THREE.MeshLambertMaterial({ transparent: true, alphaTest: 0.1 });
   _itemMaterialCache.set(itemName, mat);
-  loadMinecraftTexture(`/assets/textures/items/${itemName}.png`, (tex) => {
+  // Items are mapped onto a plain THREE.BoxGeometry, whose default UVs
+  // assume three.js's normal flipY=true convention — unlike the mob UV
+  // unwrap above, this one must NOT be flipped, or every item icon/block
+  // face renders upside down.
+  loadMinecraftTexture(`/assets/textures/items/${itemName}.png`, true, (tex) => {
     mat.map = tex;
     mat.needsUpdate = true;
   });
@@ -262,16 +276,27 @@ function makeMobMesh(mobType, displayName) {
 
   const mobJson = _mobGeoCache.get(mobType);
   const material = getMobMaterial(mobType);
-  const { root, bones } = buildMobModel(mobJson, material);
+  let root, bones;
+  try {
+    ({ root, bones } = buildMobModel(mobJson, material));
+  } catch (e) {
+    console.warn(`Failed to build real model for "${mobType}", using legacy box:`, e);
+    return makeLegacyBoxMesh(mobType, displayName);
+  }
 
   const bbox = new THREE.Box3().setFromObject(root);
   const topY = bbox.max.y;
 
+  // `root` carries the model's own 1/16 scale (see buildMobModel) — the
+  // nameplate must sit in an unscaled sibling container, not as a child
+  // of `root`, or it gets shrunk to 1/16 size along with the model.
+  const container = new THREE.Group();
+  container.add(root);
   const nameplate = makeNameplate(displayName.replace(/_/g, ' '));
   nameplate.position.y = topY + 0.3 + nameplate.scale.y / 2;
-  root.add(nameplate);
+  container.add(nameplate);
 
-  return { group: root, bones, topY };
+  return { group: container, bones, topY };
 }
 
 export class EntityManager {
@@ -344,7 +369,10 @@ export class EntityManager {
   _applyHeadPitch(bones, pitch) {
     const head = bones.get('head');
     if (!head) return;
-    head.rotation.x = -pitch;
+    // mineflayer's entity.pitch is positive when looking up; this model's
+    // head bone pitches up for a positive local rotation.x (verified
+    // against mineflayer's fromNotchianPitch convention).
+    head.rotation.x = pitch;
   }
 
   destroyMob(id) {
@@ -352,10 +380,18 @@ export class EntityManager {
     if (!entry) return;
     this._scene.remove(entry.group);
     entry.group.traverse(obj => {
-      if (obj.geometry) obj.geometry.dispose();
-      // Materials/textures for real models are shared per mob-type caches
-      // (see getMobMaterial) and must outlive any single instance's
-      // despawn — only per-instance geometry is disposed here.
+      // THREE.Sprite instances (the nameplate) all share one module-level
+      // quad geometry (three.js's own optimization) — disposing it would
+      // break every other sprite in the app, not just this one.
+      if (obj.geometry && !obj.isSprite) obj.geometry.dispose();
+      // getMobMaterial caches one material per mob TYPE and shares it
+      // across every instance of that mob — only dispose a material that
+      // is genuinely per-instance (the legacy box's own material, or the
+      // nameplate's own CanvasTexture + SpriteMaterial).
+      if (obj.material && !_sharedMobMaterials().has(obj.material)) {
+        if (obj.material.map) obj.material.map.dispose();
+        obj.material.dispose();
+      }
     });
     this._mobs.delete(id);
   }

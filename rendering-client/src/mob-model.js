@@ -56,7 +56,16 @@ function dot(a, b) {
 // Builds one cube's geometry, with vertex positions expressed relative to
 // `pivot` (bone-local space) rather than absolute model space — the owning
 // bone Group supplies the pivot's own world position/rotation.
-function addCube(attr, pivot, cube, texW, texH) {
+//
+// `bindRotation` is the bone's own static bind_pose_rotation/rotation
+// (Bedrock degrees). It is baked directly into this bone's own vertices
+// around its own pivot — it must NOT also become the bone Group's
+// `.rotation`, or it would additionally rotate every child bone's group
+// through ordinary scene-graph composition (Bedrock's bind_pose_rotation
+// is a one-time mesh-shape correction for this bone alone, not meant to
+// propagate to children — e.g. a cow's "body" bone has bind_pose_rotation
+// [90,0,0] purely to orient its own cubes; its legs/head must stay put).
+function addCube(attr, pivot, cube, bindRotation, texW, texH) {
   const cubeRotation = new THREE.Euler(0, 0, 0);
   if (cube.rotation) {
     cubeRotation.x = -cube.rotation[0] * Math.PI / 180;
@@ -80,9 +89,14 @@ function addCube(attr, pivot, cube, texW, texH) {
 
       vecPos = vecPos.applyEuler(cubeRotation);
       vecPos = vecPos.sub(pivot);
+      let normal = new THREE.Vector3(...dir);
+      if (bindRotation) {
+        vecPos = vecPos.applyEuler(bindRotation);
+        normal = normal.applyEuler(bindRotation);
+      }
 
       attr.positions.push(vecPos.x, vecPos.y, vecPos.z);
-      attr.normals.push(...dir);
+      attr.normals.push(normal.x, normal.y, normal.z);
       attr.uvs.push(u, v);
     }
 
@@ -90,13 +104,13 @@ function addCube(attr, pivot, cube, texW, texH) {
   }
 }
 
-function buildBoneMesh(jsonBone, material, texW, texH) {
+function buildBoneMesh(jsonBone, bindRotation, material, texW, texH) {
   if (!jsonBone.cubes || jsonBone.cubes.length === 0) return null;
 
   const attr = { positions: [], normals: [], uvs: [], indices: [] };
   const pivot = new THREE.Vector3(...(jsonBone.pivot || [0, 0, 0]));
   for (const cube of jsonBone.cubes) {
-    addCube(attr, pivot, cube, texW, texH);
+    addCube(attr, pivot, cube, bindRotation, texW, texH);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -126,18 +140,23 @@ export function buildMobModel(mobJson, material) {
   for (const jsonBone of jsonBones) {
     const group = new THREE.Group();
     group.name = jsonBone.name;
+    // Group.rotation starts at identity and is left there: it's the
+    // animatable transform (walk swing, head pitch). The bone's own
+    // static bind_pose_rotation/rotation is baked into its mesh instead
+    // (see addCube's `bindRotation` param) so it shapes only this bone's
+    // own cubes and never cascades into child bones' groups.
 
     const rotationDeg = jsonBone.bind_pose_rotation || jsonBone.rotation;
-    if (rotationDeg) {
-      group.rotation.set(
+    const bindRotation = rotationDeg
+      ? new THREE.Euler(
         -rotationDeg[0] * Math.PI / 180,
         -rotationDeg[1] * Math.PI / 180,
         -rotationDeg[2] * Math.PI / 180
-      );
-    }
+      )
+      : null;
 
     if (!jsonBone.neverRender) {
-      const mesh = buildBoneMesh(jsonBone, material, texturewidth, textureheight);
+      const mesh = buildBoneMesh(jsonBone, bindRotation, material, texturewidth, textureheight);
       if (mesh) group.add(mesh);
     }
 

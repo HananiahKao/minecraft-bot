@@ -14,8 +14,27 @@
 
 const fs = require('fs');
 const path = require('path');
+const { PNG } = require('pngjs');
 
 const MC_VERSION = '1.20.1';
+
+// Mobs whose only resolvable texture is confirmed wrong, for reasons a
+// generic dimension/opacity check either can't detect or would also wrongly
+// flag on legitimately sparse sprites (bats, sticks, feathers, ... are
+// "mostly transparent" on purpose, so a blanket opacity threshold isn't a
+// safe general check — these two are hand-confirmed instead):
+//  - horse/donkey/mule: Bedrock geometry declares a 128x128 texture layout
+//    (old horse atlas), but their real 1.20.1 PNGs are 64x64 using a
+//    completely different, incompatible layout — same width:height *ratio*
+//    as declared, so the aspect-ratio check below can't see it either.
+//  - villager: every available texture key is a profession *overlay*
+//    (hat + apron only); there is no base-skin key in this data source.
+const KNOWN_BAD_TEXTURE = new Set(['horse', 'donkey', 'mule', 'villager']);
+
+function readPngSize(filePath) {
+  const png = PNG.sync.read(fs.readFileSync(filePath));
+  return { width: png.width, height: png.height };
+}
 const VIEWER_ENTITIES_JSON = path.resolve(
   __dirname, '../../../prismarine-viewer/viewer/lib/entity/entities.json'
 );
@@ -72,20 +91,32 @@ function main() {
   ensureDir(path.join(OUT_DIR, 'textures', 'items'));
 
   const manifest = { mobs: [], items: [], mcVersion: MC_VERSION };
-  const gaps = { mobsNoGeometry: [], mobsNoTexture: [], itemsNoTexture: [] };
+  const gaps = { mobsNoGeometry: [], mobsNoTexture: [], mobsBadTexture: [], itemsNoTexture: [] };
 
-  // --- Mobs: geometry + texture, both required to count as "real" ---
+  // --- Mobs: geometry + a validated, usable texture, both required. ---
   for (const name of MOB_NAMES) {
+    if (KNOWN_BAD_TEXTURE.has(name)) {
+      gaps.mobsBadTexture.push(`${name} (hand-confirmed bad texture, see KNOWN_BAD_TEXTURE)`);
+      continue;
+    }
+
     const entry = entities[name];
     if (!entry || !entry.geometry || !entry.geometry.default) {
       gaps.mobsNoGeometry.push(name);
       continue;
     }
     // Many entries have no "default" texture key, only named variants
-    // (e.g. cat/horse/rabbit/villager) — prefer a same-named key, else
-    // just take the first variant listed.
+    // (e.g. cat/horse/rabbit/villager). Prefer, in order: a key matching
+    // the mob name's qualifier segment — the part before the first "_" or
+    // after the last "_" (catches elder_guardian -> its "elder" variant,
+    // where "default" actually points at the plain guardian's texture
+    // instead); a same-named key; the literal "default" key; else the
+    // first variant listed.
     const textures = entry.textures || {};
-    const texPath = textures.default || textures[name] || Object.values(textures)[0];
+    const prefix = name.includes('_') ? name.slice(0, name.indexOf('_')) : null;
+    const suffix = name.includes('_') ? name.slice(name.lastIndexOf('_') + 1) : null;
+    const texPath = (prefix && textures[prefix]) || (suffix && textures[suffix]) ||
+      textures[name] || textures.default || Object.values(textures)[0];
     if (!texPath) {
       gaps.mobsNoTexture.push(name);
       continue;
@@ -97,9 +128,28 @@ function main() {
     }
 
     const geo = entry.geometry.default;
+    const info = readPngSize(srcPng);
+
+    // When the geometry declares its own texture size, it must match the
+    // real PNG's aspect *ratio* (a uniform up/downscale is fine — UVs are
+    // normalized — but a different width:height ratio means the real
+    // texture uses an incompatible layout, e.g. zombie's declared 64x32
+    // vs its real 64x64 1.20.1 skin).
+    if (geo.texturewidth && geo.textureheight) {
+      const declaredRatio = geo.texturewidth / geo.textureheight;
+      const actualRatio = info.width / info.height;
+      if (Math.abs(declaredRatio - actualRatio) / declaredRatio > 0.01) {
+        gaps.mobsBadTexture.push(`${name} (declared ${geo.texturewidth}x${geo.textureheight} vs real ${info.width}x${info.height} — incompatible aspect ratio)`);
+        continue;
+      }
+    }
+
     const trimmed = {
-      texturewidth: geo.texturewidth,
-      textureheight: geo.textureheight,
+      // Use the geometry's declared size when present; otherwise fall
+      // back to the texture's own real pixel size rather than guessing
+      // 64x64 (entities.json omits these for a few mobs, e.g. sheep).
+      texturewidth: geo.texturewidth || info.width,
+      textureheight: geo.textureheight || info.height,
       bones: geo.bones
     };
     fs.writeFileSync(
@@ -110,11 +160,23 @@ function main() {
     manifest.mobs.push(name);
   }
 
+  // Block textures that are biome-tinted at render time in vanilla (grass,
+  // leaves, ...) — the raw texture file is deliberately greyscale/flat and
+  // only looks right with a tint we don't implement; using it untinted
+  // regresses from today's flat ITEM_COLORS green. Keep these on the
+  // legacy color fallback instead.
+  const TINT_DEPENDENT_BLOCKS = new Set(['grass', 'oak_leaves']);
+
   // --- Items: try true item-icon textures first, then block textures
   // (dropped/held blocks like dirt/stone/oak_log render as a textured
   // cube using the block's own face texture — there is no separate
   // "item icon" for these in minecraft-assets, only a block texture). ---
   for (const name of ITEM_NAMES) {
+    if (TINT_DEPENDENT_BLOCKS.has(name)) {
+      gaps.itemsNoTexture.push(`${name} (biome-tinted, needs tint we don't implement)`);
+      continue;
+    }
+
     const itemPng = path.join(assetsDir, 'items', `${name}.png`);
     const blockPng = path.join(assetsDir, 'blocks', `${name}.png`);
     let src = null;
