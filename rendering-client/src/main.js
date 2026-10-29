@@ -104,13 +104,13 @@ function init() {
   connection.onRawChunk = (raw) => rawChunkQueue.push(raw);
 
   // Geometry worker — builds Float32Arrays off the main thread
-  worker = new Worker('/src/chunk-worker.js');
+  worker = new Worker('/src/chunk-worker.js', { type: 'module' });
   worker.onerror = (e) => console.error('[worker error]', e.message, e.filename, e.lineno);
   worker.onmessage = ({ data }) => {
     if (data.empty) return;
     if (data.unknown) data.unknown.forEach(n => _unknownBlocks.add(n));
     const t0 = performance.now();
-    renderer.applyChunkGeometry(data.x, data.z, data.positions, data.normals, data.colors, data.tPositions, data.tNormals, data.tColors);
+    renderer.applyChunkGeometry(data.x, data.z, data);
     _chunkBuildTimes.push(performance.now() - t0);
     _totalVertices = renderer.totalVertices;
     if (!_loadPhaseStart) _loadPhaseStart = performance.now();
@@ -217,14 +217,14 @@ function requestMissingChunks(cx, cz) {
   const needed = [];
   for (let x = cx - CHUNK_RENDER_RADIUS; x <= cx + CHUNK_RENDER_RADIUS; x++) {
     for (let z = cz - CHUNK_RENDER_RADIUS; z <= cz + CHUNK_RENDER_RADIUS; z++) {
-      if (!renderer.chunkMeshes.has(`${x},${z}`)) needed.push({ x, z });
+      if (!renderer.isLoaded(`${x},${z}`)) needed.push({ x, z });
     }
   }
   if (needed.length > 0) connection.send({ type: 'request_chunks', chunks: needed });
 }
 
 function scheduleUnloadDistantChunks(botChunkX, botChunkZ) {
-  for (const key of renderer.chunkMeshes.keys()) {
+  for (const key of renderer.loadedKeys()) {
     const [kx, kz] = key.split(',').map(Number);
     if (Math.abs(kx - botChunkX) > CHUNK_RENDER_RADIUS || Math.abs(kz - botChunkZ) > CHUNK_RENDER_RADIUS) {
       unloadQueue.push([kx, kz]);
@@ -292,7 +292,7 @@ function onBlockUpdate(msg) {
     const props = propsMap2?.get(k);
     blocks.push(props ? { x, y, z, name, props } : { x, y, z, name });
   }
-  const reserved = (renderer.chunkMeshes.has(ckey) || renderer._updating.has(ckey))
+  const reserved = renderer.isLoaded(ckey)
     ? renderer.reserveUpdate(cx, cz)
     : renderer.reserveChunk(cx, cz);
   if (reserved) worker.postMessage({ x: cx, z: cz, blocks, edges: buildEdges(cx, cz) });
@@ -520,7 +520,7 @@ function startUpdateLoop() {
       const key = `${x},${z}`;
       _chunkQueueKeys.delete(key);
       let reserved = false;
-      if (renderer.chunkMeshes.has(key) || renderer._updating.has(key)) {
+      if (renderer.isLoaded(key)) {
         reserved = renderer.reserveUpdate(x, z);
       } else {
         reserved = renderer.reserveChunk(x, z);
@@ -536,7 +536,7 @@ function startUpdateLoop() {
       if (_chunkQueueKeys.has(nkey)) continue; // already queued as a new chunk — skip
       const [rnx, rnz] = nkey.split(',').map(Number);
       const nblocks = _chunkBlockData.get(nkey);
-      if (nblocks && renderer && (renderer.chunkMeshes.has(nkey) || renderer._updating.has(nkey))) {
+      if (nblocks && renderer && renderer.isLoaded(nkey)) {
         const nprops = _chunkPropsData.get(nkey);
         const arr = [];
         for (const [k, n] of nblocks) { const [x, y, z] = k.split(',').map(Number); const p = nprops?.get(k); arr.push(p ? { x, y, z, name: n, props: p } : { x, y, z, name: n }); }

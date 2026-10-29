@@ -1,5 +1,21 @@
-// Standalone Web Worker — no imports, runs on a separate thread.
+// Module Web Worker — runs on a separate thread.
 // Receives {x, z, blocks}, builds geometry arrays, returns via transferable.
+
+import { resolveModels, flattenElements, FACE_TABLE } from './block-model.js';
+
+// Real per-block shape + atlas-UV data (prismarine-viewer's baked build
+// output, copied verbatim — see scripts/extract-assets/ for the mob/item
+// equivalent, this one didn't need a build step at all). Fetched once;
+// every chunk message after the first `await`s the same settled promise,
+// so there's no meaningful per-chunk cost after startup. Blocks with no
+// entry here — or any block processed before this resolves — keep the
+// flat-colored path below unchanged, same fallback philosophy as the
+// mob/item rendering.
+let blockModelsData = null;
+const blockModelsReady = fetch('/assets/block_models.json')
+  .then(r => r.json())
+  .then(d => { blockModelsData = d; })
+  .catch(e => console.error('Failed to load block_models.json:', e));
 
 const BLOCK_COLORS = {
   stone: 0x808080, granite: 0x917066, diorite: 0xb3b3b3, andesite: 0x8f8f8f,
@@ -172,11 +188,12 @@ const NON_OCCLUDING_BLOCKS = new Set([
 ]);
 
 // ── Block model table ─────────────────────────────────────────────────────────
-// Maps block name → function(props) → array of boxes [{x0,y0,z0,x1,y1,z1}]
-// All coordinates are in 0–1 local block space.
-// Blocks with a model are excluded from the greedy mesher and rendered by the
-// generic model pass below, which emits 6 faces per box and culls faces that
-// touch a solid neighbor.
+// Hand-written fallback shapes, used ONLY for a block name before
+// block_models.json has loaded (or if it fails to load at all) — once real
+// data is available it always takes precedence (see modelIds/the textured
+// model pass below). Maps block name → function(props) → array of boxes
+// [{x0,y0,z0,x1,y1,z1}], 0–1 local block space. Blocks with a model (real
+// or hand-written) are excluded from the greedy mesher.
 const BLOCK_MODELS = {
   ladder: (props) => {
     const T = 0.1875; // 3/16 — matches vanilla ladder depth
@@ -250,12 +267,20 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     if (props) blockPropsMap.set(`${x},${y},${z}`, props);
   }
 
-  const positions = [];      // opaque geometry
+  const positions = [];      // opaque geometry (flat-colored, greedy-meshed)
   const normals = [];
   const colors = [];
-  const tPositions = [];     // transparent geometry
+  const tPositions = [];     // transparent geometry (flat-colored, greedy-meshed)
   const tNormals = [];
   const tColors = [];
+  const texPositions = [];   // opaque geometry (real atlas texture, per-block-face)
+  const texNormals = [];
+  const texUvs = [];
+  const texColors = [];      // tint multiplier (white, or the approx. tint — see block-model.js)
+  const texPositionsT = [];  // transparent geometry (real atlas texture, per-block-face)
+  const texNormalsT = [];
+  const texUvsT = [];
+  const texColorsT = [];
   const bxBase = chunkX * 16;
   const bzBase = chunkZ * 16;
 
@@ -318,7 +343,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
 
   const modelIds = new Set();
   for (const { name } of blocks) {
-    if (MODEL_BLOCKS.has(name)) {
+    if (MODEL_BLOCKS.has(name) || (blockModelsData && blockModelsData[name])) {
       const id = nameIndex.get(name);
       if (id !== undefined) modelIds.add(id);
     }
@@ -432,10 +457,64 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     });
   }
 
-  // ── Generic block model pass ──────────────────────────────────────────────
-  // For every block that has an entry in BLOCK_MODELS, evaluate its box list
-  // and emit 6 faces per box. The face touching a solid neighbor is culled.
+  // p0..p3 are {x,y,z,u,v} corners in block-model.js's FACE_TABLE order.
+  // Triangulated the same way as the ported models.js (ndx,1,2 / 2,1,3).
+  function pushTexFace(isTransparent, nx, ny, nz, tr, tg, tb, p0, p1, p2, p3) {
+    const pos = isTransparent ? texPositionsT : texPositions;
+    const nor = isTransparent ? texNormalsT   : texNormals;
+    const uv  = isTransparent ? texUvsT       : texUvs;
+    const col = isTransparent ? texColorsT    : texColors;
+    pos.push(p0.x,p0.y,p0.z, p1.x,p1.y,p1.z, p2.x,p2.y,p2.z,
+              p2.x,p2.y,p2.z, p1.x,p1.y,p1.z, p3.x,p3.y,p3.z);
+    uv.push(p0.u,p0.v, p1.u,p1.v, p2.u,p2.v, p2.u,p2.v, p1.u,p1.v, p3.u,p3.v);
+    for (let i = 0; i < 6; i++) { nor.push(nx,ny,nz); col.push(tr,tg,tb); }
+  }
+
+  // ── Real block-model pass ─────────────────────────────────────────────────
+  // For every block block_models.json actually has data for: resolve its
+  // variant/multipart, walk its real cuboid elements, and emit one textured
+  // quad per declared face (not 6 — only the faces the real model actually
+  // has, e.g. a ladder's model has only two). A face is culled only when the
+  // model itself marked it `cullface` and the neighbor in that exact
+  // direction is solid — vanilla's own data only sets cullface on faces that
+  // reach the full block boundary, so no extra boundary check is needed here
+  // (contrast the hand-written pass below, which must verify that itself).
+  if (blockModelsData) {
+    for (const { x, y, z, name } of blocks) {
+      const entry = blockModelsData[name];
+      if (!entry) continue;
+      const props = blockPropsMap.get(`${x},${y},${z}`) || {};
+      const models = resolveModels(blockModelsData, name, props);
+      if (!models) continue;
+      const isTransparent = transparentIds.has(nameIndex.get(name));
+      const wx = bxBase + x, wy = y, wz = bzBase + z;
+
+      for (const { box, faces } of flattenElements(models)) {
+        const X0 = wx + box.x0, Y0 = wy + box.y0, Z0 = wz + box.z0;
+        const X1 = wx + box.x1, Y1 = wy + box.y1, Z1 = wz + box.z1;
+
+        for (const dir in faces) {
+          const face = faces[dir];
+          const { dir: [dx, dy, dz], corners } = FACE_TABLE[dir];
+          if (face.cull && isSolid(gi(x + dx, y + dy, z + dz))) continue;
+
+          const p = corners.map(([cx, cy, cz, cu, cv]) => ({
+            x: cx ? X1 : X0, y: cy ? Y1 : Y0, z: cz ? Z1 : Z0,
+            u: cu * face.su + face.u, v: cv * face.sv + face.v
+          }));
+          pushTexFace(isTransparent, dx, dy, dz, face.tint[0], face.tint[1], face.tint[2],
+            p[0], p[1], p[2], p[3]);
+        }
+      }
+    }
+  }
+
+  // ── Generic hand-written block model pass ─────────────────────────────────
+  // For every block that has an entry in BLOCK_MODELS AND no real data was
+  // found above, evaluate its box list and emit 6 faces per box. The face
+  // touching a solid neighbor is culled.
   for (const { x, y, z, name } of blocks) {
+    if (blockModelsData && blockModelsData[name]) continue; // real data already handled it
     const modelFn = BLOCK_MODELS[name];
     if (!modelFn) continue;
     const props = blockPropsMap.get(`${x},${y},${z}`) || {};
@@ -475,18 +554,30 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     }
   }
 
-  if (positions.length === 0 && tPositions.length === 0) return null;
+  if (positions.length === 0 && tPositions.length === 0 &&
+      texPositions.length === 0 && texPositionsT.length === 0) return null;
   return {
-    positions:  positions.length  ? new Float32Array(positions)  : null,
-    normals:    normals.length     ? new Float32Array(normals)    : null,
-    colors:     colors.length      ? new Float32Array(colors)     : null,
-    tPositions: tPositions.length  ? new Float32Array(tPositions) : null,
-    tNormals:   tNormals.length    ? new Float32Array(tNormals)   : null,
-    tColors:    tColors.length     ? new Float32Array(tColors)    : null,
+    positions:   positions.length    ? new Float32Array(positions)    : null,
+    normals:     normals.length      ? new Float32Array(normals)      : null,
+    colors:      colors.length       ? new Float32Array(colors)       : null,
+    tPositions:  tPositions.length   ? new Float32Array(tPositions)   : null,
+    tNormals:    tNormals.length     ? new Float32Array(tNormals)     : null,
+    tColors:     tColors.length      ? new Float32Array(tColors)      : null,
+    texPositions:  texPositions.length  ? new Float32Array(texPositions)  : null,
+    texNormals:    texNormals.length    ? new Float32Array(texNormals)    : null,
+    texUvs:        texUvs.length        ? new Float32Array(texUvs)        : null,
+    texColors:     texColors.length     ? new Float32Array(texColors)     : null,
+    texPositionsT: texPositionsT.length ? new Float32Array(texPositionsT) : null,
+    texNormalsT:   texNormalsT.length   ? new Float32Array(texNormalsT)   : null,
+    texUvsT:       texUvsT.length       ? new Float32Array(texUvsT)       : null,
+    texColorsT:    texColorsT.length    ? new Float32Array(texColorsT)    : null,
   };
 }
 
-self.onmessage = ({ data: { x, z, blocks, edges } }) => {
+self.onmessage = async ({ data: { x, z, blocks, edges } }) => {
+  // Only matters for the very first messages — once settled, every later
+  // await resolves on the same microtask turn (no per-chunk delay).
+  await blockModelsReady;
   const result = buildChunkArrays(x, z, blocks, edges);
   if (!result) {
     self.postMessage({ x, z, empty: true });
@@ -500,5 +591,13 @@ self.onmessage = ({ data: { x, z, blocks, edges } }) => {
   if (result.tPositions) transferable.push(result.tPositions.buffer);
   if (result.tNormals)   transferable.push(result.tNormals.buffer);
   if (result.tColors)    transferable.push(result.tColors.buffer);
+  if (result.texPositions)  transferable.push(result.texPositions.buffer);
+  if (result.texNormals)    transferable.push(result.texNormals.buffer);
+  if (result.texUvs)        transferable.push(result.texUvs.buffer);
+  if (result.texColors)     transferable.push(result.texColors.buffer);
+  if (result.texPositionsT) transferable.push(result.texPositionsT.buffer);
+  if (result.texNormalsT)   transferable.push(result.texNormalsT.buffer);
+  if (result.texUvsT)       transferable.push(result.texUvsT.buffer);
+  if (result.texColorsT)    transferable.push(result.texColorsT.buffer);
   self.postMessage({ x, z, ...result, unknown }, transferable);
 };

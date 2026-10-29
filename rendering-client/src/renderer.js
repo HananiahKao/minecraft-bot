@@ -22,6 +22,29 @@ const CHUNK_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
   depthWrite: true, // write depth so water correctly occludes things behind it
 });
 
+// Real block textures (atlas.js's pre-built output, copied verbatim — see
+// scripts/extract-assets/'s block equivalent notes). Shared across every
+// chunk, loaded once. vertexColors stays on: it carries the fixed
+// biome-tint approximation (block-model.js's APPROX_TINT), white everywhere
+// else, multiplying the sampled texture rather than replacing it.
+const _blockAtlasTexture = new THREE.TextureLoader().load('/assets/textures/blocks/atlas.png', (tex) => {
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.flipY = false; // matches block-model.js's UV convention (ported from models.js, not three.js's default)
+});
+const CHUNK_TEXTURED_MATERIAL = new THREE.MeshLambertMaterial({
+  map: _blockAtlasTexture,
+  vertexColors: true,
+  side: THREE.FrontSide,
+});
+const CHUNK_TEXTURED_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
+  map: _blockAtlasTexture,
+  vertexColors: true,
+  side: THREE.DoubleSide,
+  transparent: true,
+  alphaTest: 0.1, // cutout transparency (glass edges, leaves, ...), not uniform opacity like water
+});
+
 const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
 // Unit cube edges (12 lines × 2 vertices)
 const _BOX_EDGES = (() => {
@@ -48,15 +71,21 @@ export class MinecraftRenderer {
 
     this.setupLighting();
 
-    // key "x,z" → THREE.Mesh (loaded chunks, opaque)
+    // key "x,z" → THREE.Mesh (loaded chunks, opaque, flat-colored fallback)
     this.chunkMeshes = new Map();
-    // key "x,z" → THREE.Mesh (loaded chunks, transparent — water/glass)
+    // key "x,z" → THREE.Mesh (loaded chunks, transparent — water/glass, flat-colored fallback)
     this.chunkMeshesT = new Map();
+    // key "x,z" → THREE.Mesh (loaded chunks, opaque, real block texture)
+    this.chunkMeshesTex = new Map();
+    // key "x,z" → THREE.Mesh (loaded chunks, transparent, real block texture)
+    this.chunkMeshesTexT = new Map();
     // key "x,z" → in-flight to worker (initial load or update)
     this._pending = new Set();
     // key "x,z" → THREE.Mesh being replaced — stays in scene until applyChunkGeometry swaps it
     this._updating = new Map();
     this._updatingT = new Map();
+    this._updatingTex = new Map();
+    this._updatingTexT = new Map();
 
     this._raycaster = new THREE.Raycaster();
     this._raycaster.near = 0.1;
@@ -97,60 +126,91 @@ export class MinecraftRenderer {
     if (existing) { this._updating.set(key, existing); this.chunkMeshes.delete(key); }
     const existingT = this.chunkMeshesT.get(key);
     if (existingT) { this._updatingT.set(key, existingT); this.chunkMeshesT.delete(key); }
+    const existingTex = this.chunkMeshesTex.get(key);
+    if (existingTex) { this._updatingTex.set(key, existingTex); this.chunkMeshesTex.delete(key); }
+    const existingTexT = this.chunkMeshesTexT.get(key);
+    if (existingTexT) { this._updatingTexT.set(key, existingTexT); this.chunkMeshesTexT.delete(key); }
     this._pending.add(key);
     return true;
   }
 
-  // Called from worker onmessage — creates opaque + transparent meshes from pre-built typed arrays.
-  applyChunkGeometry(chunkX, chunkZ, positions, normals, colors, tPositions, tNormals, tColors) {
+  // Swaps one mesh slot: removes the old mesh (if any), builds + adds a new
+  // one from the given attributes (if any data), and updates the tracking
+  // maps. Shared by all four mesh kinds (flat/textured × opaque/transparent).
+  _swapMesh(loadedMap, updatingMap, key, material, attrs) {
+    const old = updatingMap.get(key) || loadedMap.get(key);
+    if (old) { this.scene.remove(old); old.geometry.dispose(); updatingMap.delete(key); }
+    if (!attrs.position) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(attrs.position, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(attrs.normal, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(attrs.color, 3));
+    if (attrs.uv) geo.setAttribute('uv', new THREE.BufferAttribute(attrs.uv, 2));
+    geo.computeBoundingSphere(); // pre-compute so Three.js frustum culling never stalls on render
+    const mesh = new THREE.Mesh(geo, material);
+    this.scene.add(mesh);
+    loadedMap.set(key, mesh);
+  }
+
+  // Called from worker onmessage — creates up to 4 meshes (flat-colored
+  // fallback × opaque/transparent, real-textured × opaque/transparent) from
+  // the worker's pre-built typed arrays. `data` is the worker's message
+  // payload as-is (positions/normals/colors/tPositions/.../texPositions/...).
+  applyChunkGeometry(chunkX, chunkZ, data) {
     const key = `${chunkX},${chunkZ}`;
     this._pending.delete(key);
 
-    // Swap out old opaque mesh
-    const old = this._updating.get(key) || this.chunkMeshes.get(key);
-    if (old) { this.scene.remove(old); old.geometry.dispose(); this._updating.delete(key); }
-    if (positions) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
-      geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
-      geo.computeBoundingSphere(); // pre-compute so Three.js frustum culling never stalls on render
-      const mesh = new THREE.Mesh(geo, CHUNK_MATERIAL);
-      this.scene.add(mesh);
-      this.chunkMeshes.set(key, mesh);
-    }
-
-    // Swap out old transparent mesh
-    const oldT = this._updatingT.get(key) || this.chunkMeshesT.get(key);
-    if (oldT) { this.scene.remove(oldT); oldT.geometry.dispose(); this._updatingT.delete(key); }
-    if (tPositions) {
-      const geoT = new THREE.BufferGeometry();
-      geoT.setAttribute('position', new THREE.BufferAttribute(tPositions, 3));
-      geoT.setAttribute('normal',   new THREE.BufferAttribute(tNormals,   3));
-      geoT.setAttribute('color',    new THREE.BufferAttribute(tColors,    3));
-      geoT.computeBoundingSphere();
-      const meshT = new THREE.Mesh(geoT, CHUNK_TRANSPARENT_MATERIAL);
-      this.scene.add(meshT);
-      this.chunkMeshesT.set(key, meshT);
-    }
+    this._swapMesh(this.chunkMeshes, this._updating, key, CHUNK_MATERIAL,
+      { position: data.positions, normal: data.normals, color: data.colors });
+    this._swapMesh(this.chunkMeshesT, this._updatingT, key, CHUNK_TRANSPARENT_MATERIAL,
+      { position: data.tPositions, normal: data.tNormals, color: data.tColors });
+    this._swapMesh(this.chunkMeshesTex, this._updatingTex, key, CHUNK_TEXTURED_MATERIAL,
+      { position: data.texPositions, normal: data.texNormals, color: data.texColors, uv: data.texUvs });
+    this._swapMesh(this.chunkMeshesTexT, this._updatingTexT, key, CHUNK_TEXTURED_TRANSPARENT_MATERIAL,
+      { position: data.texPositionsT, normal: data.texNormalsT, color: data.texColorsT, uv: data.texUvsT });
   }
 
   removeChunk(chunkX, chunkZ) {
     const key = `${chunkX},${chunkZ}`;
     this._pending.delete(key);
-    const mesh = this.chunkMeshes.get(key);
-    if (mesh) { this.scene.remove(mesh); mesh.geometry.dispose(); this.chunkMeshes.delete(key); }
-    const meshT = this.chunkMeshesT.get(key);
-    if (meshT) { this.scene.remove(meshT); meshT.geometry.dispose(); this.chunkMeshesT.delete(key); }
+    for (const map of [this.chunkMeshes, this.chunkMeshesT, this.chunkMeshesTex, this.chunkMeshesTexT]) {
+      const mesh = map.get(key);
+      if (mesh) { this.scene.remove(mesh); mesh.geometry.dispose(); map.delete(key); }
+    }
+  }
+
+  // True once a chunk's geometry has arrived from the worker, in ANY of the
+  // 4 mesh kinds — a chunk made entirely of real-textured blocks (now very
+  // plausible, with ~1004 blocks covered) may have nothing in chunkMeshes
+  // at all, so callers that mean "is this chunk loaded" must check all of
+  // them, not just chunkMeshes.has(key). Also true mid-rebuild (any
+  // "_updating*" map), matching reserveUpdate's own join condition.
+  isLoaded(key) {
+    return this.chunkMeshes.has(key) || this.chunkMeshesT.has(key) ||
+      this.chunkMeshesTex.has(key) || this.chunkMeshesTexT.has(key) ||
+      this._updating.has(key) || this._updatingT.has(key) ||
+      this._updatingTex.has(key) || this._updatingTexT.has(key);
+  }
+
+  // Every currently-loaded chunk key, across all 4 mesh kinds — for callers
+  // that need to enumerate loaded chunks (e.g. to find out-of-range ones to
+  // unload), not just check one.
+  loadedKeys() {
+    const keys = new Set();
+    for (const map of [this.chunkMeshes, this.chunkMeshesT, this.chunkMeshesTex, this.chunkMeshesTexT]) {
+      for (const key of map.keys()) keys.add(key);
+    }
+    return keys;
   }
 
   // Chunks that are fully in scene OR being rebuilt (old mesh still visible) — never drops during seam-fix rebuilds
-  get loadedChunks() { return this.chunkMeshes.size + this._updating.size; }
+  get loadedChunks() { return this.loadedKeys().size + this._updating.size; }
 
   get totalVertices() {
     let n = 0;
-    for (const mesh of this.chunkMeshes.values())
-      n += mesh.geometry.attributes.position.count;
+    for (const map of [this.chunkMeshes, this.chunkMeshesTex])
+      for (const mesh of map.values())
+        n += mesh.geometry.attributes.position.count;
     return n;
   }
 
@@ -160,6 +220,8 @@ export class MinecraftRenderer {
     const meshes = [
       ...this.chunkMeshes.values(),
       ...this.chunkMeshesT.values(),
+      ...this.chunkMeshesTex.values(),
+      ...this.chunkMeshesTexT.values(),
     ];
     const hits = this._raycaster.intersectObjects(meshes, false);
     if (hits.length === 0) {
