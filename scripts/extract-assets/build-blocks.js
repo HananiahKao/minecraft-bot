@@ -3,22 +3,29 @@
  * Rebuilds rendering-client/assets/block_models.json + textures/blocks/atlas.png
  * ourselves, instead of copying prismarine-web-client's published copy.
  *
- * Why: prismarine-viewer's own build (viewer/lib/modelsBuilder.js,
- * `prepareBlocksStates` -> `resolveModel(variant.model, ...)`) passes only
- * the model NAME STRING for each variant, silently dropping that variant's
- * own `x`/`y` rotation fields (which sit as siblings of `model` in vanilla's
- * blockstate format — e.g. ladder's "facing=east" variant is literally
- * `{ model: "block/ladder", y: 90 }`). The result: every block whose
- * variants differ only by a rotation (the normal way Mojang authors most
- * directional blocks — one base model, rotated per facing) bakes out
- * IDENTICAL geometry/UVs for every direction. Confirmed on the published
- * npm package AND by reading this repo's current modelsBuilder.js source —
- * it's a bug in their build logic, not stale output, so re-running their
- * actual build would not have fixed it either.
+ * Why: prismarine-viewer's own pipeline is actually two stages — build time
+ * (viewer/lib/modelsBuilder.js) bakes textures/UV into each variant's
+ * model but deliberately leaves `x`/`y` rotation untouched as a sibling of
+ * `model` (e.g. ladder's "facing=east" variant is literally
+ * `{ model: {...baked...}, y: 90 }`), and their RUNTIME renderer
+ * (viewer/lib/models.js's getSectionGeometry) reads that leftover `x`/`y`
+ * separately and applies it live via a rotation matrix. That's a
+ * deliberate, reasonable design when you also ship their runtime — but our
+ * block-model.js only ever reads `model.elements` and never looked at
+ * `variant.x`/`variant.y` at all, so every direction rendered identically.
  *
- * This reimplements their pipeline with that rotation applied. atlas.js
- * (texture packing) is reused unmodified — that part isn't buggy, only the
- * model-resolving step is.
+ * Rather than add runtime rotation (matching their split exactly), this
+ * takes the simpler alternative: bake the rotation into the geometry once,
+ * here, at build time, so no rotation logic is needed anywhere at runtime.
+ * Measured cost of that choice: about 8% larger block_models.json than
+ * leaving rotation for runtime would produce (11.46MB vs ~10.6MB) — most of
+ * a resolved variant's size is the per-face texture/UV data either way,
+ * which has to be stored once per variant regardless of whether its
+ * numbers happen to be rotated.
+ *
+ * atlas.js (texture packing) is reused unmodified from the installed
+ * prismarine-viewer package — that part was never involved in this at all,
+ * only the model-resolving step needed reimplementing.
  *
  * Rotation convention (verified against real vanilla data, not guessed):
  *  - Y rotation (around the vertical axis, pivot (8,8) in 0-16 element
@@ -37,8 +44,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const mcAssets = require('minecraft-assets')('1.20.1');
-const { makeTextureAtlas } = require('/Users/hananiah/Developer/prismarine-viewer/viewer/lib/atlas.js');
+const { MC_VERSION } = require('./version.js');
+const mcAssets = require('minecraft-assets')(MC_VERSION);
+// npm-resolved, not a hardcoded path to a manually-cloned sibling repo.
+const { makeTextureAtlas } = require('prismarine-viewer/viewer/lib/atlas.js');
 
 const OUT_DIR = path.resolve(__dirname, '../../rendering-client/assets');
 

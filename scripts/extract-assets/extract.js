@@ -15,8 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PNG } = require('pngjs');
-
-const MC_VERSION = '1.20.1';
+const { MC_VERSION } = require('./version.js');
 
 // Mobs whose only resolvable texture is confirmed wrong, for reasons a
 // generic dimension/opacity check either can't detect or would also wrongly
@@ -70,9 +69,10 @@ function requiredTextureSize(bones) {
   }
   return { width: maxU, height: maxV };
 }
-const VIEWER_ENTITIES_JSON = path.resolve(
-  __dirname, '../../../prismarine-viewer/viewer/lib/entity/entities.json'
-);
+// npm-resolved, not a hardcoded path to a manually-cloned sibling repo —
+// `npm install`/`npm update` is what keeps this current for a new MC
+// version, same as any other dependency.
+const VIEWER_ENTITIES_JSON = require.resolve('prismarine-viewer/viewer/lib/entity/entities.json');
 const OUT_DIR = path.resolve(__dirname, '../../rendering-client/assets');
 
 // Entity names that are projectiles/vehicles/misc, never spawned through
