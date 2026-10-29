@@ -36,13 +36,20 @@ const CHUNK_TEXTURED_MATERIAL = new THREE.MeshLambertMaterial({
   map: _blockAtlasTexture,
   vertexColors: true,
   side: THREE.FrontSide,
+  // Cutout alpha (leaves, grass_block's tinted side overlay, ...): discard
+  // near-transparent texels instead of showing their raw RGB, which is
+  // typically black in the source PNG. Deliberately NOT `transparent: true`
+  // — these aren't translucent like glass/water, they're fully opaque
+  // wherever alpha permits, so this stays in the opaque render queue (no
+  // blending, no sorting cost) and just adds the discard.
+  alphaTest: 0.1,
 });
 const CHUNK_TEXTURED_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
   map: _blockAtlasTexture,
   vertexColors: true,
   side: THREE.DoubleSide,
   transparent: true,
-  alphaTest: 0.1, // cutout transparency (glass edges, leaves, ...), not uniform opacity like water
+  alphaTest: 0.1, // for blocks that are BOTH translucent AND cutout (e.g. stained glass panes)
 });
 
 const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
