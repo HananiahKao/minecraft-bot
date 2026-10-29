@@ -379,8 +379,6 @@ let _maxFrameTime = 0;
 let _idleFrameSum = 0, _idleFrameCount = 0;
 let _mouseFrameSum = 0, _mouseFrameCount = 0;
 const MOUSE_ACTIVE_WINDOW = 100; // ms — frame counts as mouse-active if moved within this window
-const MOUSE_LO_RES_WINDOW = 200; // ms — keep pixel ratio low for this long after last mouse move
-let _isLoRes = false;
 
 // Metrics tracking — accumulated
 const _chunkBuildTimes = [];
@@ -429,17 +427,6 @@ function startUpdateLoop() {
     _lastRafTimestamp = timestamp;
     if (inputHandler) inputHandler.applyMouseLook();
 
-    // Dynamic pixel ratio: drop to 0.5 during mouse movement to reduce GPU fragment load
-    if (renderer) {
-      const mouseActive = inputHandler && (timestamp - inputHandler.lastMouseMoveTime) < MOUSE_LO_RES_WINDOW;
-      if (mouseActive && !_isLoRes) {
-        renderer.setPixelRatio(0.5);
-        _isLoRes = true;
-      } else if (!mouseActive && _isLoRes) {
-        renderer.setPixelRatio(window.devicePixelRatio);
-        _isLoRes = false;
-      }
-    }
     requestAnimationFrame(loop);
 
     // Drain raw message queue — chunk_data enqueued for rate-limited worker dispatch,
