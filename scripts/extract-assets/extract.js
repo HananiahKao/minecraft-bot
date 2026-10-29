@@ -125,21 +125,50 @@ function main() {
   ensureDir(path.join(OUT_DIR, 'textures', 'entity'));
   ensureDir(path.join(OUT_DIR, 'textures', 'items'));
 
-  const manifest = { mobs: [], items: [], mcVersion: MC_VERSION };
-  const gaps = { mobsNoGeometry: [], mobsNoTexture: [], mobsBadTexture: [], itemsNoTexture: [] };
+  // `mobs`: real geometry + a validated, matching texture — full fidelity.
+  // `mobsNoTexture`: real geometry, but no usable texture was found for it
+  // (missing/overlay-only/wrong-layout/too-small) — still worth showing the
+  // real shape for, with a flat "needs a texture" placeholder color at
+  // runtime, rather than discarding correct shape data just because the
+  // skin is missing. Anything in neither list keeps the legacy box.
+  const manifest = { mobs: [], mobsNoTexture: [], items: [], mcVersion: MC_VERSION };
+  const gaps = { mobsNoGeometry: [], mobsNoTexture: [], itemsNoTexture: [] };
 
-  // --- Mobs: geometry + a validated, usable texture, both required. ---
   for (const name of MOB_NAMES) {
-    if (KNOWN_BAD_TEXTURE.has(name)) {
-      gaps.mobsBadTexture.push(`${name} (hand-confirmed bad texture, see KNOWN_BAD_TEXTURE)`);
-      continue;
-    }
-
     const entry = entities[name];
     if (!entry || !entry.geometry || !entry.geometry.default) {
       gaps.mobsNoGeometry.push(name);
       continue;
     }
+    const geo = entry.geometry.default;
+
+    // Geometry is valid regardless of what happens to the texture below —
+    // write it unconditionally so a texture-only failure still gets a real
+    // shape instead of losing the geometry entirely.
+    const texturewidthFallback = geo.texturewidth;
+    const textureheightFallback = geo.textureheight;
+
+    function writeGeometryOnly(reason) {
+      gaps.mobsNoTexture.push(`${name} (${reason})`);
+      fs.writeFileSync(
+        path.join(OUT_DIR, 'mobs', `${name}.json`),
+        JSON.stringify({
+          // No validated real size available — 64x64 (Entity.js's own
+          // historical default) is a reasonable guess; it only affects UV
+          // scaling of a placeholder-colored mesh with no texture map.
+          texturewidth: texturewidthFallback || 64,
+          textureheight: textureheightFallback || 64,
+          bones: geo.bones
+        })
+      );
+      manifest.mobsNoTexture.push(name);
+    }
+
+    if (KNOWN_BAD_TEXTURE.has(name)) {
+      writeGeometryOnly('hand-confirmed bad texture, see KNOWN_BAD_TEXTURE');
+      continue;
+    }
+
     // Many entries have no "default" texture key, only named variants
     // (e.g. cat/horse/rabbit/villager). Prefer, in order: a key matching
     // the mob name's qualifier segment — the part before the first "_" or
@@ -153,16 +182,15 @@ function main() {
     const texPath = (prefix && textures[prefix]) || (suffix && textures[suffix]) ||
       textures[name] || textures.default || Object.values(textures)[0];
     if (!texPath) {
-      gaps.mobsNoTexture.push(name);
+      writeGeometryOnly('no texture key found');
       continue;
     }
     const srcPng = path.join(assetsDir, texPath.replace(/^textures\//, '') + '.png');
     if (!fs.existsSync(srcPng)) {
-      gaps.mobsNoTexture.push(name);
+      writeGeometryOnly('resolved texture file does not exist');
       continue;
     }
 
-    const geo = entry.geometry.default;
     const info = readPngSize(srcPng);
     const required = requiredTextureSize(geo.bones);
 
@@ -172,11 +200,10 @@ function main() {
     // real texture is the wrong one/wrong layout for this geometry (e.g.
     // zombie's declared-64x32-but-needs-64x64 skin, or sheep's undeclared
     // geometry that turns out to need a 64-tall sheet against a real
-    // 64x32 sheep_fur.png) — fall back to the legacy box instead of
-    // sampling past the texture's edge.
+    // 64x32 sheep_fur.png).
     if (info.width < required.width - 0.5 || info.height < required.height - 0.5) {
-      gaps.mobsBadTexture.push(
-        `${name} (geometry needs a texture at least ${Math.ceil(required.width)}x${Math.ceil(required.height)}, real texture is only ${info.width}x${info.height})`
+      writeGeometryOnly(
+        `geometry needs a texture at least ${Math.ceil(required.width)}x${Math.ceil(required.height)}, real texture is only ${info.width}x${info.height}`
       );
       continue;
     }
@@ -189,7 +216,7 @@ function main() {
       const declaredRatio = geo.texturewidth / geo.textureheight;
       const actualRatio = info.width / info.height;
       if (Math.abs(declaredRatio - actualRatio) / declaredRatio > 0.01) {
-        gaps.mobsBadTexture.push(`${name} (declared ${geo.texturewidth}x${geo.textureheight} vs real ${info.width}x${info.height} — incompatible aspect ratio)`);
+        writeGeometryOnly(`declared ${geo.texturewidth}x${geo.textureheight} vs real ${info.width}x${info.height} — incompatible aspect ratio`);
         continue;
       }
     }
@@ -247,7 +274,8 @@ function main() {
   );
 
   console.log(`mcAssets resolved to: ${assetsDir}`);
-  console.log(`Mobs extracted: ${manifest.mobs.length}/${MOB_NAMES.length}`);
+  console.log(`Mobs with real shape + texture: ${manifest.mobs.length}/${MOB_NAMES.length}`);
+  console.log(`Mobs with real shape, no texture (placeholder color): ${manifest.mobsNoTexture.length}/${MOB_NAMES.length}`);
   console.log(`Items extracted: ${manifest.items.length}/${ITEM_NAMES.length}`);
   console.log('Gaps (kept on legacy fallback):', JSON.stringify(gaps, null, 2));
 }

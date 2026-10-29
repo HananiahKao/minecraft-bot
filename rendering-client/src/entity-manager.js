@@ -166,8 +166,16 @@ function getMobMaterial(mobType) {
   return mat;
 }
 
+// Shared, non-disposable placeholder material for mobs with a real shape
+// but no usable texture (wrong/missing skin data upstream — see
+// scripts/extract-assets/extract.js's mobsNoTexture gap reasons). Same
+// magenta used elsewhere in this file to mean "needs attention": the real
+// geometry is worth showing, but the flat color makes clear it's not a
+// finished skin, unlike a plausible-looking but wrong texture would.
+const _missingTextureMaterial = new THREE.MeshLambertMaterial({ color: DEFAULT_MOB_COLOR });
+
 function _sharedMobMaterials() {
-  return new Set(_mobMaterialCache.values());
+  return new Set([..._mobMaterialCache.values(), _missingTextureMaterial]);
 }
 
 function getItemMaterial(itemName) {
@@ -191,7 +199,8 @@ const _assetsReady = (async () => {
     const res = await fetch('/assets/manifest.json');
     if (!res.ok) return;
     const manifest = await res.json();
-    await Promise.all(manifest.mobs.map(async (name) => {
+    const allMobNames = [...manifest.mobs, ...(manifest.mobsNoTexture || [])];
+    await Promise.all(allMobNames.map(async (name) => {
       const r = await fetch(`/assets/mobs/${name}.json`);
       if (r.ok) _mobGeoCache.set(name, await r.json());
     }));
@@ -267,15 +276,19 @@ function makeLegacyBoxMesh(mobType, displayName) {
 }
 
 // Real model path: only taken when the manifest + this mob's geometry JSON
-// are both already loaded (see _assetsReady above). Anything else — a mob
-// absent from the manifest, or one that hasn't finished loading yet —
-// falls through to the legacy colored box, unchanged from today.
+// are both already loaded (see _assetsReady above). A mob can have real
+// geometry with no usable texture (manifest.mobsNoTexture) — it still gets
+// the real shape, just with the flat placeholder color instead of a skin.
+// Anything absent from both manifest lists, or not yet loaded, falls
+// through to the legacy colored box, unchanged from today.
 function makeMobMesh(mobType, displayName) {
-  const hasRealModel = _manifest && _manifest.mobs.includes(mobType) && _mobGeoCache.has(mobType);
-  if (!hasRealModel) return makeLegacyBoxMesh(mobType, displayName);
+  const hasGeometry = _manifest && _mobGeoCache.has(mobType) &&
+    (_manifest.mobs.includes(mobType) || _manifest.mobsNoTexture.includes(mobType));
+  if (!hasGeometry) return makeLegacyBoxMesh(mobType, displayName);
 
+  const hasTexture = _manifest.mobs.includes(mobType);
   const mobJson = _mobGeoCache.get(mobType);
-  const material = getMobMaterial(mobType);
+  const material = hasTexture ? getMobMaterial(mobType) : _missingTextureMaterial;
   let root, bones;
   try {
     ({ root, bones } = buildMobModel(mobJson, material));
@@ -339,7 +352,8 @@ export class EntityManager {
 
   spawnMob(id, mobType, x, y, z, yaw, username, pitch) {
     if (this._mobs.has(id)) this.destroyMob(id);
-    if (!(mobType in MOB_COLORS) && !(_manifest && _manifest.mobs.includes(mobType))) {
+    const hasAnyManifestEntry = _manifest && (_manifest.mobs.includes(mobType) || _manifest.mobsNoTexture.includes(mobType));
+    if (!(mobType in MOB_COLORS) && !hasAnyManifestEntry) {
       this.unknownMobs.add(mobType);
     }
     const displayName = (mobType === 'player' && username) ? username : mobType;
