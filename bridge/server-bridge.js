@@ -102,7 +102,7 @@ function bfsAsync(data) {
   });
 }
 
-const BRIDGE_PORT = 8080;
+const BRIDGE_PORT = process.env.BRIDGE_PORT || 8080;
 
 // Blocks that open a GUI when right-clicked — activateBlock() instead of block_place
 const INTERACTIVE_BLOCKS = new Set([
@@ -295,7 +295,7 @@ function initBot() {
 
   // entity_metadata arrives shortly after entitySpawn and carries the item stack.
   bot._client.on('entity_metadata', (packet) => {
-    const entity = bot.entities[packet.entityId];
+    const entity = bot.entities && bot.entities[packet.entityId];
     if (!entity || entity.name !== 'item') return;
     if (!_pendingItems.has(packet.entityId)) return;
     _pendingItems.delete(packet.entityId);
