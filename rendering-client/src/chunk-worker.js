@@ -38,6 +38,36 @@ function hasRealModel(name) {
   return has;
 }
 
+// Per-name cache: is this block's real model exactly one full 0-16 cube
+// with all 6 faces present and cullable — i.e. does it fully occlude
+// neighbors, same as any flat-colored full block always has? This is a
+// NARROWER check than hasRealModel() on purpose: most real-textured
+// blocks (stone, dirt, sand, planks, ...) are full cubes and must still
+// be treated as solid for face-culling, even though they're drawn by the
+// textured pass instead of the flat-color greedy mesh. Only genuinely
+// partial shapes (stairs, slabs, fences, torches, ...) should stop
+// occluding their neighbors — conflating "has a model" with "doesn't
+// occlude" (as an earlier version of this file did) broke culling for
+// every full-cube textured block, letting flat-colored faces (most
+// visibly water) draw right through solid ground and z-fight with it.
+const _isFullCubeCache = new Map();
+function isFullCubeModel(name) {
+  if (_isFullCubeCache.has(name)) return _isFullCubeCache.get(name);
+  let full = false;
+  if (blockModelsData && blockModelsData[name]) {
+    const models = resolveModels(blockModelsData, name, {});
+    const flat = models ? flattenElements(models) : [];
+    if (flat.length === 1) {
+      const { box, faces } = flat[0];
+      full = box.x0 === 0 && box.y0 === 0 && box.z0 === 0 &&
+        box.x1 === 1 && box.y1 === 1 && box.z1 === 1 &&
+        ['up', 'down', 'north', 'south', 'east', 'west'].every(d => faces[d] && faces[d].cull);
+    }
+  }
+  _isFullCubeCache.set(name, full);
+  return full;
+}
+
 const blockModelsReady = fetch('/assets/block_models.json')
   .then(r => r.json())
   .then(d => { blockModelsData = d; })
@@ -367,16 +397,27 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
     return grid[x + z * 16 + (y - yMin) * 16 * 16];
   }
 
+  // modelIds: skip the flat-colored greedy mesh for these — either a real
+  // or hand-written model exists, full cube or not.
+  // partialShapeIds: the narrower subset that does NOT fully occlude
+  // neighbors — hand-written models are always partial by construction;
+  // real-model blocks only join this set when they're genuinely not a
+  // full cube (see isFullCubeModel's comment for why this must be
+  // separate from modelIds).
   const modelIds = new Set();
+  const partialShapeIds = new Set();
   for (const { name } of blocks) {
-    if (MODEL_BLOCKS.has(name) || hasRealModel(name)) {
+    const real = hasRealModel(name);
+    if (MODEL_BLOCKS.has(name) || real) {
       const id = nameIndex.get(name);
-      if (id !== undefined) modelIds.add(id);
+      if (id === undefined) continue;
+      modelIds.add(id);
+      if (MODEL_BLOCKS.has(name) || !isFullCubeModel(name)) partialShapeIds.add(id);
     }
   }
 
-  // A neighbor fully occludes a face only when it is solid (not transparent, non-occluding, or modeled).
-  function isSolid(id) { return id !== 0 && !transparentIds.has(id) && !nonOccludingIds.has(id) && !modelIds.has(id); }
+  // A neighbor fully occludes a face only when it is solid (not transparent, non-occluding, or a partial shape).
+  function isSolid(id) { return id !== 0 && !transparentIds.has(id) && !nonOccludingIds.has(id) && !partialShapeIds.has(id); }
   function skipMesh(id) { return modelIds.has(id); }
   // Suppress internal faces between two transparent blocks of the same kind (e.g. water-water)
   function suppressTransparent(bt, neighbor) { return neighbor !== 0 && transparentIds.has(bt) && transparentIds.has(neighbor); }
