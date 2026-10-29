@@ -35,6 +35,41 @@ function readPngSize(filePath) {
   const png = PNG.sync.read(fs.readFileSync(filePath));
   return { width: png.width, height: png.height };
 }
+
+// Same box-UV face table as rendering-client/src/mob-model.js's elemFaces,
+// kept only for the u1/v1 (far-corner) vectors needed to compute how large
+// a texture a cube's UV actually requires — must stay consistent with that
+// file's addCube, since this is validating against the exact same math.
+const FAR_UV_VECTORS = [
+  { u1: [1, 0, 1], v1: [0, 0, 1] }, // up
+  { u1: [2, 0, 1], v1: [0, 0, 1] }, // down
+  { u1: [1, 0, 2], v1: [0, 1, 1] }, // east
+  { u1: [0, 0, 1], v1: [0, 1, 1] }, // west
+  { u1: [1, 0, 1], v1: [0, 1, 1] }, // north
+  { u1: [2, 0, 2], v1: [0, 1, 1] } // south
+];
+
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+// The minimum texture (width, height) a geometry's cubes actually sample
+// into, in raw pixels — i.e. the real requirement, independent of whatever
+// texturewidth/textureheight the geometry does or doesn't declare. A real
+// PNG smaller than this in either dimension cannot be the right texture for
+// this geometry, no matter how plausible its declared size looks (this is
+// exactly how sheep's geometry — which declares no size at all — turned out
+// to need a 64-tall sheet while its real "sheep_fur" PNG is only 32 tall).
+function requiredTextureSize(bones) {
+  let maxU = 0, maxV = 0;
+  for (const bone of bones) {
+    for (const cube of bone.cubes || []) {
+      for (const { u1, v1 } of FAR_UV_VECTORS) {
+        maxU = Math.max(maxU, cube.uv[0] + dot(u1, cube.size));
+        maxV = Math.max(maxV, cube.uv[1] + dot(v1, cube.size));
+      }
+    }
+  }
+  return { width: maxU, height: maxV };
+}
 const VIEWER_ENTITIES_JSON = path.resolve(
   __dirname, '../../../prismarine-viewer/viewer/lib/entity/entities.json'
 );
@@ -129,12 +164,27 @@ function main() {
 
     const geo = entry.geometry.default;
     const info = readPngSize(srcPng);
+    const required = requiredTextureSize(geo.bones);
 
-    // When the geometry declares its own texture size, it must match the
-    // real PNG's aspect *ratio* (a uniform up/downscale is fine — UVs are
-    // normalized — but a different width:height ratio means the real
-    // texture uses an incompatible layout, e.g. zombie's declared 64x32
-    // vs its real 64x64 1.20.1 skin).
+    // The real PNG must actually be big enough to contain every UV region
+    // the geometry's cubes reference — regardless of what texturewidth/
+    // textureheight the geometry does or doesn't declare. If it isn't, the
+    // real texture is the wrong one/wrong layout for this geometry (e.g.
+    // zombie's declared-64x32-but-needs-64x64 skin, or sheep's undeclared
+    // geometry that turns out to need a 64-tall sheet against a real
+    // 64x32 sheep_fur.png) — fall back to the legacy box instead of
+    // sampling past the texture's edge.
+    if (info.width < required.width - 0.5 || info.height < required.height - 0.5) {
+      gaps.mobsBadTexture.push(
+        `${name} (geometry needs a texture at least ${Math.ceil(required.width)}x${Math.ceil(required.height)}, real texture is only ${info.width}x${info.height})`
+      );
+      continue;
+    }
+    // When the geometry also declares its own texture size, it must match
+    // the real PNG's aspect *ratio* (a uniform up/downscale is fine — UVs
+    // are normalized — but a different ratio means an incompatible layout
+    // that the size check above can still miss, e.g. horse/donkey/mule are
+    // excluded by name for exactly this reason already).
     if (geo.texturewidth && geo.textureheight) {
       const declaredRatio = geo.texturewidth / geo.textureheight;
       const actualRatio = info.width / info.height;
@@ -145,9 +195,9 @@ function main() {
     }
 
     const trimmed = {
-      // Use the geometry's declared size when present; otherwise fall
-      // back to the texture's own real pixel size rather than guessing
-      // 64x64 (entities.json omits these for a few mobs, e.g. sheep).
+      // Use the geometry's declared size when present; otherwise the real
+      // texture's own pixel size, which the check above just confirmed is
+      // large enough to contain every cube's UV region.
       texturewidth: geo.texturewidth || info.width,
       textureheight: geo.textureheight || info.height,
       bones: geo.bones
