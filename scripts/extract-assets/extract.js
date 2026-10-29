@@ -75,22 +75,21 @@ const VIEWER_ENTITIES_JSON = path.resolve(
 );
 const OUT_DIR = path.resolve(__dirname, '../../rendering-client/assets');
 
-// Every mob name currently in entity-manager.js's MOB_COLORS table — attempt
-// extraction for all of them (strict superset of the curated survival-mob
-// list from the plan); anything entities.json/minecraft-assets doesn't have
-// simply stays on the existing colored-box fallback.
-const MOB_NAMES = [
-  'pig', 'cow', 'sheep', 'chicken', 'rabbit', 'horse', 'donkey', 'mule',
-  'wolf', 'cat', 'ocelot', 'parrot', 'fox', 'bee', 'goat', 'axolotl',
-  'frog', 'allay', 'sniffer', 'armadillo', 'camel',
-  'zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'slime',
-  'ghast', 'zombie_piglin', 'blaze', 'magma_cube',
-  'cod', 'salmon', 'tropical_fish', 'pufferfish', 'squid', 'glow_squid',
-  'dolphin', 'turtle', 'guardian', 'elder_guardian', 'drowned',
-  'bat',
-  'villager', 'wandering_trader', 'trader_llama', 'iron_golem', 'snow_golem',
-  'player'
-];
+// Entity names that are projectiles/vehicles/misc, never spawned through
+// this project's spawnMob path at all (server-bridge.js's entitySpawn
+// handler already drops anything with mineflayer entity.type === 'object'
+// before it reaches the bridge->client message, e.g. arrows, boats,
+// minecarts, thrown items, fireballs). Extracting geometry for these would
+// just be unused dead weight in the repo, not wrong — skip them on that
+// basis alone.
+const NON_MOB_ENTITIES = new Set([
+  'arrow', 'boat', 'chest_minecart', 'command_block_minecart',
+  'dragon_fireball', 'egg', 'ender_pearl', 'evoker_fangs',
+  'experience_bottle', 'experience_orb', 'eye_of_ender', 'fireball',
+  'firework_rocket', 'fishing_bobber', 'hopper_minecart', 'leash_knot',
+  'llama_spit', 'minecart', 'potion', 'shulker_bullet', 'small_fireball',
+  'snowball', 'tnt_minecart', 'trident', 'wither_skull'
+]);
 
 // Every item name currently in entity-manager.js's ITEM_COLORS table.
 const ITEM_NAMES = [
@@ -133,6 +132,12 @@ function main() {
   // skin is missing. Anything in neither list keeps the legacy box.
   const manifest = { mobs: [], mobsNoTexture: [], items: [], mcVersion: MC_VERSION };
   const gaps = { mobsNoGeometry: [], mobsNoTexture: [], itemsNoTexture: [] };
+
+  // Attempt every entity entities.json knows about — not a curated guess
+  // at "common" mobs. The validation below (geometry presence, texture
+  // size/ratio/existence) is what actually decides what's usable; nothing
+  // here pre-filters based on how common or important a mob seems.
+  const MOB_NAMES = Object.keys(entities).filter(name => !NON_MOB_ENTITIES.has(name));
 
   for (const name of MOB_NAMES) {
     const entry = entities[name];
@@ -185,15 +190,22 @@ function main() {
       writeGeometryOnly('no texture key found');
       continue;
     }
-    // entities.json's player texture path ("textures/entity/steve") is a
-    // flat legacy convention; minecraft-assets' real resourcepack layout
-    // nests it under entity/player/<wide|slim>/steve.png. This is only a
-    // fallback default anyway — real connected players' actual skins are a
-    // separate, per-player dynamic fetch (not something a static
-    // extraction pass can produce), not implemented here.
+    // entities.json's texture paths are sometimes flatter than
+    // minecraft-assets' real resourcepack layout: "textures/entity/squid"
+    // is really at entity/squid/squid.png (basename repeated as its own
+    // subdirectory) — try that pattern before giving up. player/player_slim
+    // use a different, hardcoded nesting (entity/player/<wide|slim>/) since
+    // they're not simple basename-repeats; these are only fallback
+    // defaults anyway — real connected players' actual skins are a
+    // separate, per-player dynamic fetch not implemented here.
+    const flatPath = path.join(assetsDir, texPath.replace(/^textures\//, '') + '.png');
+    const basename = path.basename(flatPath, '.png');
+    const nestedPath = path.join(path.dirname(flatPath), basename, basename + '.png');
     const srcPng = name === 'player'
       ? path.join(assetsDir, 'entity', 'player', 'wide', 'steve.png')
-      : path.join(assetsDir, texPath.replace(/^textures\//, '') + '.png');
+      : name === 'player_slim'
+        ? path.join(assetsDir, 'entity', 'player', 'slim', 'alex.png')
+        : fs.existsSync(flatPath) ? flatPath : nestedPath;
     if (!fs.existsSync(srcPng)) {
       writeGeometryOnly('resolved texture file does not exist');
       continue;
