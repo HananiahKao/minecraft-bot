@@ -12,6 +12,32 @@ import { resolveModels, flattenElements, FACE_TABLE } from './block-model.js';
 // flat-colored path below unchanged, same fallback philosophy as the
 // mob/item rendering.
 let blockModelsData = null;
+
+// Per-name cache: does this block actually have at least one real,
+// drawable element? A few entries in block_models.json exist but are
+// empty stubs — water's only variant has `elements: []`, because real
+// liquids are rendered by prismarine-viewer's separate dynamic
+// height-field system (not ported here), not the normal block-model
+// path. Checking only "does an entry exist" would route water to the
+// real-model pass, find nothing to draw, AND still exclude it from the
+// flat-colored fallback (since it'd count as "handled") — invisible
+// from both systems. This checks with empty props as a representative
+// sample: any block with a genuine model has elements in at least one
+// variant (even the "no variant key matched" fallback picks one), so a
+// completely empty result means the block itself has no real geometry,
+// not just a props mismatch.
+const _hasRealModelCache = new Map();
+function hasRealModel(name) {
+  if (_hasRealModelCache.has(name)) return _hasRealModelCache.get(name);
+  let has = false;
+  if (blockModelsData && blockModelsData[name]) {
+    const models = resolveModels(blockModelsData, name, {});
+    has = !!(models && flattenElements(models).length > 0);
+  }
+  _hasRealModelCache.set(name, has);
+  return has;
+}
+
 const blockModelsReady = fetch('/assets/block_models.json')
   .then(r => r.json())
   .then(d => { blockModelsData = d; })
@@ -343,7 +369,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
 
   const modelIds = new Set();
   for (const { name } of blocks) {
-    if (MODEL_BLOCKS.has(name) || (blockModelsData && blockModelsData[name])) {
+    if (MODEL_BLOCKS.has(name) || hasRealModel(name)) {
       const id = nameIndex.get(name);
       if (id !== undefined) modelIds.add(id);
     }
@@ -481,8 +507,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
   // (contrast the hand-written pass below, which must verify that itself).
   if (blockModelsData) {
     for (const { x, y, z, name } of blocks) {
-      const entry = blockModelsData[name];
-      if (!entry) continue;
+      if (!hasRealModel(name)) continue;
       const props = blockPropsMap.get(`${x},${y},${z}`) || {};
       const models = resolveModels(blockModelsData, name, props);
       if (!models) continue;
@@ -514,7 +539,7 @@ function buildChunkArrays(chunkX, chunkZ, blocks, edges) {
   // found above, evaluate its box list and emit 6 faces per box. The face
   // touching a solid neighbor is culled.
   for (const { x, y, z, name } of blocks) {
-    if (blockModelsData && blockModelsData[name]) continue; // real data already handled it
+    if (hasRealModel(name)) continue; // real data already handled it
     const modelFn = BLOCK_MODELS[name];
     if (!modelFn) continue;
     const props = blockPropsMap.get(`${x},${y},${z}`) || {};
