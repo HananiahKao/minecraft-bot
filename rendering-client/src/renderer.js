@@ -152,9 +152,15 @@ export class MinecraftRenderer {
     geo.setAttribute('position', new THREE.BufferAttribute(attrs.position, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(attrs.normal, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(attrs.color, 3));
+    const isTextured = !!attrs.uv;
     if (attrs.uv) geo.setAttribute('uv', new THREE.BufferAttribute(attrs.uv, 2));
     geo.computeBoundingSphere(); // pre-compute so Three.js frustum culling never stalls on render
     const mesh = new THREE.Mesh(geo, material);
+    // Raycasting (updateRaycast) needs to know whether a hit came from real
+    // block-model geometry (trust the normal unconditionally) or the
+    // flat-colored fallback (may still include the old hand-written thick
+    // ladder box, which needs the oblique-angle correction — see there).
+    mesh.userData.isTextured = isTextured;
     this.scene.add(mesh);
     loadedMap.set(key, mesh);
   }
@@ -251,27 +257,37 @@ export class MinecraftRenderer {
     const bz = Math.floor(hit.point.z - gn.z * E);
     this.targetedBlock = { x: bx, y: by, z: bz };
 
-    // Face direction: normally the geometry normal is correct. But thin model
-    // blocks (ladders, torches, rails …) have a visible face whose normal
-    // points away from the wall, so clicking the side still returns the front
-    // face normal. Detect this: if the geometry normal faces AWAY from the
-    // camera (dot product with -ray_dir ≤ 0) it isn't the approach face.
-    // In that case, derive the face from the dominant ray axis instead.
-    const rd = this._raycaster.ray.direction;
-    // A real face the ray head-on should have dot(gn, -rd) close to 1.
-    // Thin model blocks (ladders, rails, torches) expose a face whose normal
-    // is nearly perpendicular to the ray when clicked from the side, so the
-    // dot product is small. Use 0.5 as threshold (≈60°) so side-clicks on
-    // thin blocks fall through to the dominant-ray fallback.
-    const facesCamera = -(gn.x * rd.x + gn.y * rd.y + gn.z * rd.z) > 0.5;
-    let fn;
-    if (facesCamera) {
-      fn = { x: gn.x, y: gn.y, z: gn.z };
-    } else {
-      const ax = Math.abs(rd.x), ay = Math.abs(rd.y), az = Math.abs(rd.z);
-      if (ax >= ay && ax >= az)      fn = { x: rd.x < 0 ? 1 : -1, y: 0, z: 0 };
-      else if (ay >= ax && ay >= az) fn = { x: 0, y: rd.y < 0 ? 1 : -1, z: 0 };
-      else                           fn = { x: 0, y: 0, z: rd.z < 0 ? 1 : -1 };
+    // Face direction: the geometry normal from a real hit is always
+    // geometrically correct and should be trusted directly — this used to
+    // be unconditional, but a fallback was added for the OLD hand-written
+    // flat-colored ladder box (thick, 3/16 deep, with real clickable side
+    // surfaces): clicking that box's side edge could return its one visible
+    // face's normal instead of the side you actually clicked. That fallback
+    // used viewing angle (dot(normal, -ray) ≤ 0.5, i.e. >=60 degrees off
+    // normal) as a proxy for "this might be an edge click" — but viewing
+    // angle alone doesn't mean that at all: looking at any ordinary flat
+    // top face from a shallow angle (e.g. looking down slightly while
+    // walking) is >=60 degrees off normal very often, and the real block-
+    // model geometry (now covering ~1000 blocks, not just a hand-written
+    // special case) has no such ambiguity — a real ladder is now a
+    // paper-thin plane with no meaningful side surface to misfire on.
+    // Applying this correction to those hits was overriding perfectly
+    // correct top-face hits with a wrong guessed side face whenever viewed
+    // at anything but a steep angle — exactly the reported bug (sapling
+    // placement failing when aiming at the ground from a shallow angle).
+    // Scope the fallback to ONLY the flat-colored, non-textured meshes,
+    // where the old thick hand-written box can still appear (pre-load
+    // fallback window).
+    let fn = { x: gn.x, y: gn.y, z: gn.z };
+    if (!hit.object.userData.isTextured) {
+      const rd = this._raycaster.ray.direction;
+      const facesCamera = -(gn.x * rd.x + gn.y * rd.y + gn.z * rd.z) > 0.5;
+      if (!facesCamera) {
+        const ax = Math.abs(rd.x), ay = Math.abs(rd.y), az = Math.abs(rd.z);
+        if (ax >= ay && ax >= az)      fn = { x: rd.x < 0 ? 1 : -1, y: 0, z: 0 };
+        else if (ay >= ax && ay >= az) fn = { x: 0, y: rd.y < 0 ? 1 : -1, z: 0 };
+        else                           fn = { x: 0, y: 0, z: rd.z < 0 ? 1 : -1 };
+      }
     }
     this.targetedFace = fn;
 
