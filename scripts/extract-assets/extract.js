@@ -185,7 +185,15 @@ function main() {
       writeGeometryOnly('no texture key found');
       continue;
     }
-    const srcPng = path.join(assetsDir, texPath.replace(/^textures\//, '') + '.png');
+    // entities.json's player texture path ("textures/entity/steve") is a
+    // flat legacy convention; minecraft-assets' real resourcepack layout
+    // nests it under entity/player/<wide|slim>/steve.png. This is only a
+    // fallback default anyway — real connected players' actual skins are a
+    // separate, per-player dynamic fetch (not something a static
+    // extraction pass can produce), not implemented here.
+    const srcPng = name === 'player'
+      ? path.join(assetsDir, 'entity', 'player', 'wide', 'steve.png')
+      : path.join(assetsDir, texPath.replace(/^textures\//, '') + '.png');
     if (!fs.existsSync(srcPng)) {
       writeGeometryOnly('resolved texture file does not exist');
       continue;
