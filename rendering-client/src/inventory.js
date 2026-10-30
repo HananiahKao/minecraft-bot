@@ -9,6 +9,8 @@
  * Click events are forwarded to the bridge via onClickSlot(slotIndex, mouseButton).
  */
 
+import { makeItemVisual } from './item-icon.js';
+
 const SLOT_SIZE = 52;
 const GAP = 4;
 
@@ -116,10 +118,7 @@ export class InventoryScreen {
     const c = this._cursor;
     c.innerHTML = '';
     if (item) {
-      const name = document.createElement('div');
-      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
-      name.textContent = item.name.replace(/_/g, '\n');
-      c.appendChild(name);
+      c.appendChild(makeItemVisual(item));
       if (item.count > 1) {
         const cnt = document.createElement('div');
         cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
@@ -164,10 +163,7 @@ export class InventoryScreen {
     c.innerHTML = '';
     const item = this._heldItem;
     if (item) {
-      const name = document.createElement('div');
-      name.style.cssText = `font-size:9px;line-height:1.2;word-break:break-all;text-align:center;text-shadow:1px 1px 0 #000;pointer-events:none;`;
-      name.textContent = item.name.replace(/_/g, '\n');
-      c.appendChild(name);
+      c.appendChild(makeItemVisual(item));
       if (item.count > 1) {
         const cnt = document.createElement('div');
         cnt.style.cssText = `position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;`;
@@ -252,14 +248,7 @@ export class InventoryScreen {
     `;
 
     if (item) {
-      const name = item.name.replace(/_/g, '\n');
-      const abbr = document.createElement('div');
-      abbr.style.cssText = `
-        font-size:9px;line-height:1.2;word-break:break-all;text-align:center;
-        text-shadow:1px 1px 0 #000;color:#fff;pointer-events:none;
-      `;
-      abbr.textContent = name;
-      cell.appendChild(abbr);
+      cell.appendChild(makeItemVisual(item));
 
       if (item.count > 1) {
         const cnt = document.createElement('div');

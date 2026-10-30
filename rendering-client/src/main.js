@@ -11,6 +11,7 @@ import { setupMobileControls } from './mobile.js';
 import { InventoryScreen } from './inventory.js';
 import { WindowScreen } from './window-screen.js';
 import { EntityManager } from './entity-manager.js';
+import { hasItemIcon, itemIconUrl } from './item-icon.js';
 
 let renderer = null;
 let entityManager = null;
@@ -337,7 +338,11 @@ function updateHotbar() {
   if (!el) return;
   el.innerHTML = _hotbarSlots.map((item, i) => {
     const active = i === _heldSlot;
-    const label = item ? item.name.replace(/_/g, ' ') : '';
+    const hasIcon = item && hasItemIcon(item.name);
+    const label = (item && !hasIcon) ? item.name.replace(/_/g, ' ') : '';
+    const iconHtml = hasIcon
+      ? `<div style="width:32px;height:32px;background-image:url(${itemIconUrl(item.name)});background-size:contain;background-repeat:no-repeat;background-position:center;image-rendering:pixelated;pointer-events:none;"></div>`
+      : '';
     let durBar = '';
     if (item && item.maxDurability > 0) {
       const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
@@ -352,7 +357,7 @@ function updateHotbar() {
       background:rgba(0,0,0,0.6);border-radius:3px;display:flex;flex-direction:column;
       align-items:center;justify-content:center;font-size:9px;color:${active ? '#ffcc00' : '#aaa'};
       text-align:center;line-height:1.2;overflow:hidden;padding:2px;box-sizing:border-box;
-      position:relative;cursor:pointer" data-slot="${i}">${label}${countBadge}${durBar}</div>`;
+      position:relative;cursor:pointer" data-slot="${i}">${iconHtml}${label}${countBadge}${durBar}</div>`;
   }).join('');
   el.querySelectorAll('[data-slot]').forEach(div => {
     div.onclick = () => {
