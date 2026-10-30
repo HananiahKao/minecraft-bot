@@ -67,6 +67,16 @@ for (let stage = 0; stage <= 9; stage++) {
   _breakStageMaterials.push(new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
+    // Vanilla draws this as a multiplicative darkening pass, not an
+    // opaque decal: the texture's real pixels are mid/dark gray at FULL
+    // alpha (checked directly — (61,61,61) and (155,155,155), alpha 255),
+    // with near-white at near-zero alpha for "no crack yet". Normal
+    // alpha blending shows those gray values as flat gray squares;
+    // multiply blending instead darkens whatever's already rendered by
+    // that fraction (white = identity = no visible change, the darker
+    // tones push the real block texture toward black), which is what
+    // produces the familiar near-black crack look.
+    blending: THREE.MultiplyBlending,
     depthWrite: false, // decal on top of the block's own faces, never occludes anything
     polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, // avoid z-fighting at the identical depth
   }));
