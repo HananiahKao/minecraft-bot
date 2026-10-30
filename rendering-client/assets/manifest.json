@@ -869,5 +869,6 @@
     "skull_pottery_sherd",
     "snort_pottery_sherd"
   ],
-  "mcVersion": "1.20.1"
+  "mcVersion": "1.20.1",
+  "breakStages": 10
 }

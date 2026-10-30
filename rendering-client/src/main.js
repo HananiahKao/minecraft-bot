@@ -485,6 +485,12 @@ function startUpdateLoop() {
           }
         }
         else if (msg.type === 'entity_destroy')   { if (entityManager) entityManager.destroy(msg.id); }
+        else if (msg.type === 'dig_progress') {
+          if (renderer) {
+            if (msg.x === null) renderer.clearDig();
+            else renderer.startDig(msg.x, msg.y, msg.z, msg.totalMs);
+          }
+        }
       } catch (e) {}
     }
     const _dt_parse = performance.now() - _t_parse;
@@ -543,6 +549,7 @@ function startUpdateLoop() {
       entityManager.tick(_lastFrameGap / 1000);
     }
     renderer.updateRaycast();
+    renderer.updateBreakOverlay();
     renderer.render();
     const _dt_render = performance.now() - _t_render;
 

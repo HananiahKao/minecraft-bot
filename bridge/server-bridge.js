@@ -821,13 +821,25 @@ wss.on('connection', (ws) => {
               _digInProgress = true;
               _digTarget = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
               console.log(`⛏️  Breaking ${block.name} at ${pos}`);
+              // bot.digTime already accounts for held tool/enchantments/effects —
+              // send it once so the client can animate the crack overlay locally
+              // from its own clock, instead of us pushing per-tick progress.
+              broadcastMessage({
+                type: 'dig_progress',
+                x: targetedBlock.x, y: targetedBlock.y, z: targetedBlock.z,
+                totalMs: bot.digTime(block),
+              });
               const digPromise = bot.dig(block);
               if (digPromise && typeof digPromise.catch === 'function') {
                 digPromise
                   .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
-                  .finally(() => { _digInProgress = false; _digTarget = null; });
+                  .finally(() => {
+                    _digInProgress = false; _digTarget = null;
+                    broadcastMessage({ type: 'dig_progress', x: null });
+                  });
               } else {
                 _digInProgress = false; _digTarget = null;
+                broadcastMessage({ type: 'dig_progress', x: null });
               }
             }
           }
@@ -835,6 +847,7 @@ wss.on('connection', (ws) => {
           try { bot.stopDigging(); } catch (e) {}
           _digInProgress = false;
           _digTarget = null;
+          broadcastMessage({ type: 'dig_progress', x: null });
         }
         const isCreative = bot.game && bot.game.gameMode === 'creative';
         const isSpectator = bot.game && bot.game.gameMode === 'spectator';

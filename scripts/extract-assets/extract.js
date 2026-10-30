@@ -278,6 +278,19 @@ function main() {
     manifest.items.push(name);
   }
 
+  // --- Block-break crack overlay (destroy_stage_0..9) — vanilla's own
+  // generic, tiling crack-progress textures, same for every block type.
+  // Not biome/tool-specific, just 10 fixed PNGs to copy once. ---
+  ensureDir(path.join(OUT_DIR, 'textures', 'break'));
+  let breakStages = 0;
+  for (let stage = 0; stage <= 9; stage++) {
+    const src = path.join(assetsDir, 'blocks', `destroy_stage_${stage}.png`);
+    if (!fs.existsSync(src)) continue;
+    fs.copyFileSync(src, path.join(OUT_DIR, 'textures', 'break', `destroy_stage_${stage}.png`));
+    breakStages++;
+  }
+  manifest.breakStages = breakStages;
+
   fs.writeFileSync(
     path.join(OUT_DIR, 'manifest.json'),
     JSON.stringify(manifest, null, 2)

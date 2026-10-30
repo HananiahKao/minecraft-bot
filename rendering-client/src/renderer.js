@@ -52,6 +52,27 @@ const CHUNK_TEXTURED_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
   alphaTest: 0.1, // for blocks that are BOTH translucent AND cutout (e.g. stained glass panes)
 });
 
+// Block-break crack overlay (destroy_stage_0..9, vanilla's own generic
+// tiling crack textures — one shared material per stage, texture swapped
+// in as digging progresses). Loaded once; a block not yet broken just
+// never shows one, same as any other not-yet-loaded asset in this file.
+const _breakStageMaterials = [];
+for (let stage = 0; stage <= 9; stage++) {
+  const tex = new THREE.TextureLoader().load(`/assets/textures/break/destroy_stage_${stage}.png`, (t) => {
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+  });
+  _breakStageMaterials.push(new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false, // decal on top of the block's own faces, never occludes anything
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, // avoid z-fighting at the identical depth
+  }));
+}
+const _BREAK_OVERLAY_GEO = new THREE.BoxGeometry(1.002, 1.002, 1.002);
+
 const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
 // Unit cube edges (12 lines × 2 vertices)
 const _BOX_EDGES = (() => {
@@ -105,6 +126,13 @@ export class MinecraftRenderer {
     this.scene.add(this._highlightMesh);
     this.targetedBlock = null; // { x, y, z } or null
     this.targetedFace = null;  // { x, y, z } normal of the hit face
+
+    // Block-break crack overlay — one reusable mesh, texture swapped as
+    // digging progresses. null dig = not currently digging anything.
+    this._breakOverlay = new THREE.Mesh(_BREAK_OVERLAY_GEO, _breakStageMaterials[0]);
+    this._breakOverlay.visible = false;
+    this.scene.add(this._breakOverlay);
+    this._dig = null; // { x, y, z, totalMs, startedAt, stage }
 
     window.addEventListener('resize', () => this.onWindowResize());
   }
@@ -203,6 +231,33 @@ export class MinecraftRenderer {
       this.chunkMeshesTex.has(key) || this.chunkMeshesTexT.has(key) ||
       this._updating.has(key) || this._updatingT.has(key) ||
       this._updatingTex.has(key) || this._updatingTexT.has(key);
+  }
+
+  // Called once when the bridge reports a dig has started (see main.js's
+  // 'dig_progress' handler). totalMs already accounts for tool/
+  // enchantments — the overlay's crack stage is then computed locally
+  // from elapsed wall-clock time each frame in updateBreakOverlay(), no
+  // further messages needed until the dig ends.
+  startDig(x, y, z, totalMs) {
+    this._dig = { x, y, z, totalMs, startedAt: performance.now(), stage: -1 };
+    this._breakOverlay.position.set(x + 0.5, y + 0.5, z + 0.5);
+    this._breakOverlay.visible = true;
+  }
+
+  clearDig() {
+    this._dig = null;
+    this._breakOverlay.visible = false;
+  }
+
+  // Call once per frame (before render), only while a dig is active.
+  updateBreakOverlay() {
+    if (!this._dig) return;
+    const elapsed = performance.now() - this._dig.startedAt;
+    const stage = Math.min(9, Math.floor((elapsed / this._dig.totalMs) * 10));
+    if (stage !== this._dig.stage) {
+      this._dig.stage = stage;
+      this._breakOverlay.material = _breakStageMaterials[stage];
+    }
   }
 
   // Every currently-loaded chunk key, across all 4 mesh kinds — for callers
