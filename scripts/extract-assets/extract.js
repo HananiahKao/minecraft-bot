@@ -91,25 +91,15 @@ const NON_MOB_ENTITIES = new Set([
   'snowball', 'tnt_minecart', 'trident', 'wither_skull'
 ]);
 
-// Every item name currently in entity-manager.js's ITEM_COLORS table.
-const ITEM_NAMES = [
-  'dirt', 'grass', 'stone', 'sand', 'gravel', 'cobblestone', 'oak_log',
-  'oak_planks', 'oak_leaves', 'birch_log', 'spruce_log', 'jungle_log',
-  'acacia_log', 'dark_oak_log', 'iron_ore', 'gold_ore', 'diamond_ore',
-  'coal_ore', 'redstone_ore', 'lapis_ore', 'emerald_ore', 'iron_ingot',
-  'gold_ingot', 'diamond', 'coal', 'redstone', 'lapis_lazuli', 'emerald',
-  'apple', 'bread', 'beef', 'chicken', 'porkchop', 'salmon', 'cod',
-  'wheat', 'wheat_seeds', 'carrot', 'potato', 'melon_slice', 'pumpkin',
-  'stick', 'bow', 'arrow', 'wooden_sword', 'stone_sword', 'iron_sword',
-  'golden_sword', 'diamond_sword', 'wooden_pickaxe', 'stone_pickaxe',
-  'iron_pickaxe', 'glass', 'glass_pane', 'oak_sapling', 'spruce_sapling',
-  'birch_sapling', 'jungle_sapling', 'acacia_sapling', 'dark_oak_sapling',
-  'andesite', 'granite', 'diorite', 'magma_block', 'ladder',
-  'stripped_oak_log', 'raw_copper', 'raw_iron', 'raw_gold', 'egg',
-  'glow_ink_sac', 'ink_sac', 'torch', 'crafting_table', 'furnace',
-  'chest', 'bookshelf', 'tnt', 'water_bucket', 'lava_bucket', 'bucket',
-  'bone', 'bone_meal', 'string', 'feather', 'leather', 'wool'
-];
+// Every real item in the game (minecraft-data's registry), not just the
+// curated subset entity-manager.js's ITEM_COLORS table used for in-world
+// dropped-item rendering — a chest/inventory can hold anything, so the
+// hotbar/inventory UI needs much broader icon coverage. 'air' isn't a
+// real item a player can hold; everything else is attempted, same
+// validated pipeline (items/ then blocks/ fallback, below).
+const ITEM_NAMES = require('minecraft-data')(MC_VERSION).itemsArray
+  .map(i => i.name)
+  .filter(name => name !== 'air');
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
