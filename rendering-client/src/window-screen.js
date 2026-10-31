@@ -50,13 +50,15 @@ function columnsFor(n) {
 }
 
 export class WindowScreen {
-  constructor({ onClose, onClickSlot }) {
+  constructor({ onClose, onClickSlot, onSelectTrade }) {
     this._slots = [];
     this._windowType = null;
     this._playerSlots = [];   // player main inv + hotbar shown below container
     this._inventoryStart = 0; // offset so window_click slot indices are correct
     this._onClose = onClose;
     this._onClickSlot = onClickSlot;
+    this._onSelectTrade = onSelectTrade;
+    this._trades = [];        // villager/wandering-trader offers, set via setTrades()
     this._open = false;
     this._heldItem = null;
     this._properties = {};    // window properties (furnace progress, etc.)
@@ -127,11 +129,20 @@ export class WindowScreen {
     this._playerSlots = playerSlots || [];
     this._inventoryStart = inventoryStart || 0;
     this._properties = {};
+    this._trades = []; // trade list arrives separately via setTrades(), after open()
     this._title.textContent = parseTitle(title);
     this._clearHeld();
     this._render();
     this._el.style.display = 'flex';
     this._open = true;
+  }
+
+  // Villager/wandering-trader offer list — arrives via its own 'window_trades'
+  // message, decoupled from the generic slot sync (see window-screen's header
+  // comment on why: it's a separate protocol packet, not a slot update).
+  setTrades(trades) {
+    this._trades = trades || [];
+    if (this._open) this._render();
   }
 
   close() {
@@ -228,6 +239,85 @@ export class WindowScreen {
     return a;
   }
 
+  // Villager/wandering-trader screen: a row of selectable trade offers
+  // above the vanilla 3-slot layout (input1 + input2 -> output) those
+  // offers fill in once picked. The offer cards themselves aren't window
+  // slots — clicking one sends 'select_trade' (by offer index), which the
+  // bridge turns into the actual item movement; the 3 slots below still
+  // go through the normal slot-click path like any other container.
+  _renderMerchant() {
+    const container = document.createElement('div');
+    container.style.cssText = `display:flex;flex-direction:column;gap:8px;max-width:${SLOT_SIZE * 7 + GAP * 6}px;`;
+
+    const list = document.createElement('div');
+    list.style.cssText = `display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;`;
+    this._trades.forEach((trade, i) => {
+      const disabled = trade.disabled;
+      const card = document.createElement('div');
+      card.style.cssText = `
+        display:flex;align-items:center;gap:2px;padding:4px 6px;flex:0 0 auto;
+        background:${disabled ? '#999' : '#8b8b8b'};border:2px solid #555;
+        border-top-color:#fff;border-left-color:#fff;
+        cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? 0.5 : 1};
+      `;
+      card.appendChild(this._tradeItemIcon(trade.input1));
+      if (trade.input2) {
+        const plus = document.createElement('div');
+        plus.textContent = '+';
+        plus.style.cssText = `color:#333;font-size:12px;padding:0 2px;`;
+        card.appendChild(plus);
+        card.appendChild(this._tradeItemIcon(trade.input2));
+      }
+      const arrow = document.createElement('div');
+      arrow.textContent = '➜';
+      arrow.style.cssText = `font-size:16px;color:#555;padding:0 4px;`;
+      card.appendChild(arrow);
+      card.appendChild(this._tradeItemIcon(trade.output));
+      const uses = document.createElement('div');
+      uses.textContent = `${Math.max(0, trade.maxUses - trade.uses)}`;
+      uses.style.cssText = `font-size:10px;color:#333;margin-left:4px;`;
+      uses.title = 'uses remaining';
+      card.appendChild(uses);
+      if (!disabled) card.addEventListener('click', () => { if (this._onSelectTrade) this._onSelectTrade(i); });
+      list.appendChild(card);
+    });
+    if (this._trades.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = 'Loading trades…';
+      empty.style.cssText = `font-size:12px;color:#444;padding:8px 2px;`;
+      list.appendChild(empty);
+    }
+    container.appendChild(list);
+
+    const slotsRow = document.createElement('div');
+    slotsRow.style.cssText = `display:flex;align-items:center;gap:4px;`;
+    slotsRow.appendChild(this._grid([0], 1));
+    slotsRow.appendChild(this._grid([1], 1));
+    slotsRow.appendChild(this._arrow());
+    slotsRow.appendChild(this._grid([2], 1));
+    container.appendChild(slotsRow);
+
+    return container;
+  }
+
+  // Small non-interactive item preview used inside a trade offer card —
+  // deliberately not a full _makeSlot(): these aren't clickable window
+  // slots, just a read-only picture of what an offer costs/pays.
+  _tradeItemIcon(item) {
+    const cell = document.createElement('div');
+    cell.style.cssText = `width:${SLOT_SIZE * 0.7}px;height:${SLOT_SIZE * 0.7}px;position:relative;display:flex;align-items:center;justify-content:center;`;
+    if (item) {
+      cell.appendChild(makeItemVisual(item));
+      if (item.count > 1) {
+        const cnt = document.createElement('div');
+        cnt.style.cssText = `position:absolute;bottom:0;right:1px;font-size:9px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;`;
+        cnt.textContent = item.count;
+        cell.appendChild(cnt);
+      }
+    }
+    return cell;
+  }
+
   _render() {
     const b = this._body;
     b.innerHTML = '';
@@ -302,6 +392,9 @@ export class WindowScreen {
 
     } else if (t.includes('hopper')) {
       b.appendChild(this._grid([0,1,2,3,4], 5));
+
+    } else if (t.includes('merchant')) {
+      b.appendChild(this._renderMerchant());
 
     } else {
       // Generic grid — 9-wide if divisible, otherwise auto-columns

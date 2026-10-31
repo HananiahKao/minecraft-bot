@@ -14,7 +14,39 @@ import pkg from 'prismarine-chunk';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
 import PrismarineBlock from 'prismarine-block';
+import PrismarineItem from 'prismarine-item';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { readFileSync } from 'fs';
+import { resolveModels, flattenElements } from '../rendering-client/src/block-model.js';
 const { Chunk } = pkg;
+
+// Same baked shape data the rendering client uses for its own occlusion
+// decisions (see rendering-client/src/chunk-worker.js's isFullCubeModel) —
+// reused here so the BFS visibility pass below agrees with what the client
+// will actually render, instead of drifting out of sync with its own
+// separate notion of "solid enough to block".
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const _blockModelsData = JSON.parse(
+  readFileSync(join(__dirname, '../rendering-client/assets/block_models.json'), 'utf8')
+);
+const _isFullCubeCache = new Map();
+function isFullCubeModel(name) {
+  if (_isFullCubeCache.has(name)) return _isFullCubeCache.get(name);
+  let full = false;
+  if (_blockModelsData[name]) {
+    const models = resolveModels(_blockModelsData, name, {});
+    const flat = models ? flattenElements(models) : [];
+    if (flat.length === 1) {
+      const { box, faces } = flat[0];
+      full = box.x0 === 0 && box.y0 === 0 && box.z0 === 0 &&
+        box.x1 === 1 && box.y1 === 1 && box.z1 === 1 &&
+        ['up', 'down', 'north', 'south', 'east', 'west'].every(d => faces[d] && faces[d].cull);
+    }
+  }
+  _isFullCubeCache.set(name, full);
+  return full;
+}
 
 // ── Block stateId lookup tables ───────────────────────────────────────────────
 // Built once per MC version. Allows broadcastChunk to use getBlockStateId()
@@ -52,7 +84,22 @@ function buildBlockLookups(version) {
       // BFS must flow through ladders so vertical shafts connected only via
       // a ladder column are correctly detected as reachable.
       // Same logic applies to glass, water, and other see-through blocks.
-      _solidByState[sid] = b.transparent ? 0 : 1;
+      //
+      // transparent alone isn't enough, though: minecraft-data flags
+      // farmland, slabs, stairs, trapdoors, fences, etc. as transparent:false
+      // (they're visually opaque) despite having a real geometric gap —
+      // farmland is only 15/16 tall, for instance. If the ONLY path into a
+      // pocket of blocks is through that gap (e.g. a block sitting directly
+      // under a "floating" farmland tile with nothing else open), a
+      // transparent-only BFS can never flow past the farmland to discover
+      // it, so that block never gets marked "exposed" and the bridge never
+      // sends it to the client at all — not a rendering bug, a missing-data
+      // bug: the client draws nothing because it was never told the block
+      // exists. isFullCubeModel() mirrors the client's own occlusion check,
+      // so any block whose real shape isn't a solid 16³ cube — not just
+      // the ones minecraft-data happens to flag transparent — is treated
+      // as BFS-passable too.
+      _solidByState[sid] = (b.transparent || !isFullCubeModel(b.name)) ? 0 : 1;
       _nameByState[sid]  = b.name;
       const p = b._properties;
       if (p && Object.keys(p).length > 0) _propsByState[sid] = p;
@@ -420,6 +467,53 @@ function initBot() {
     bot._client.on('craft_progress_bar', onProp);
     // Clean up when this window closes so we don't accumulate listeners
     bot.once('windowClose', () => bot._client.removeListener('craft_progress_bar', onProp));
+
+    // Villager/wandering-trader windows get their offer list via a separate
+    // packet (not part of the generic slot sync above) — forward it so the
+    // client can render a proper trade-selection UI instead of just the
+    // bare 3 input/output slots.
+    if (String(win.type).includes('merchant')) {
+      const tradeListPacket = bot.supportFeature('useMCTrList') ? 'MC|TrList'
+        : bot.supportFeature('usetraderlist') ? 'minecraft:trader_list' : 'trade_list';
+      const Item = PrismarineItem(bot.registry);
+      const onTrades = (packet) => {
+        if (packet.windowId !== win.id) return;
+        // Populate win.trades in exactly the shape mineflayer's own
+        // bot.trade(win, index, count) expects (mirrors the villager
+        // plugin's internal gotTrades, which only runs for bot.openVillager
+        // — we open merchants via plain bot.openEntity() instead, since
+        // openVillager asserts the entity is a villager and rejects
+        // wandering traders) — this is what lets select_trade below work.
+        win.trades = (packet.trades || []).map(trade => {
+          trade.inputs = [trade.inputItem1 = Item.fromNotch(trade.inputItem1 || { blockId: -1 })];
+          if (trade.inputItem2?.itemCount != null) {
+            trade.inputs.push(trade.inputItem2 = Item.fromNotch(trade.inputItem2 || { blockId: -1 }));
+          }
+          trade.hasItem2 = !!(trade.inputItem2 && trade.inputItem2.type && trade.inputItem2.count);
+          trade.outputs = [trade.outputItem = Item.fromNotch(trade.outputItem || { blockId: -1 })];
+          if (trade.demand !== undefined && trade.specialPrice !== undefined) {
+            const demandDiff = Math.max(0, Math.floor(trade.inputItem1.count * trade.demand * trade.priceMultiplier));
+            trade.realPrice = Math.min(Math.max((trade.inputItem1.count + trade.specialPrice + demandDiff), 1), trade.inputItem1.stackSize);
+          } else {
+            trade.realPrice = trade.inputItem1.count;
+          }
+          return trade;
+        });
+        broadcastMessage({
+          type: 'window_trades',
+          trades: win.trades.map(t => ({
+            input1: t.inputItem1 ? { name: t.inputItem1.name, count: t.inputItem1.count } : null,
+            input2: t.hasItem2 && t.inputItem2 ? { name: t.inputItem2.name, count: t.inputItem2.count } : null,
+            output: t.outputItem ? { name: t.outputItem.name, count: t.outputItem.count } : null,
+            disabled: !!t.tradeDisabled,
+            uses: t.nbTradeUses,
+            maxUses: t.maximumNbTradeUses,
+          })),
+        });
+      };
+      bot._client.on(tradeListPacket, onTrades);
+      bot.once('windowClose', () => bot._client.removeListener(tradeListPacket, onTrades));
+    }
   });
 
   bot.on('windowClose', () => {
@@ -739,7 +833,17 @@ wss.on('connection', (ws) => {
       if (message.type === 'use_item' && botReady && bot) {
         const gm = bot.game && bot.game.gameMode;
         if (gm === 'survival' || gm === 'creative') {
-          bot.activateItem(false).catch(e => console.warn('use_item failed:', e.message));
+          // Only reached when the client's raycast found no block (and no
+          // entity) in reach — e.g. activateItem(false) "use in air". A
+          // bucket right-click that logs THIS instead of the 🧱 line below
+          // means the crosshair never actually landed on the water block.
+          console.log(`🤲 use_item (no block/entity targeted), held=${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+          // activateItem() is synchronous (just writes a packet) in this
+          // mineflayer version — it returns undefined, not a promise.
+          // Calling .catch() on that throws "Cannot read properties of
+          // undefined (reading 'catch')" and aborts this whole message
+          // handler, silently eating every use_item right after it logged.
+          try { bot.activateItem(false); } catch (e) { console.warn('use_item failed:', e.message); }
         }
       } else if (message.type === 'open_inventory' && botReady && bot) {
         broadcastInventory();
@@ -778,15 +882,73 @@ wss.on('connection', (ws) => {
         if (gm !== 'survival' && gm !== 'creative') return;
         const { x, y, z } = message.block;
         const targetBlock = bot.blockAt(new Vec3(x, y, z));
-        // Interactive blocks open a GUI — activate them instead of placing on them
+        const face = message.face || { x: 0, y: 1, z: 0 };
+        // Anything held that isn't itself a placeable block (buckets, hoes,
+        // flint & steel, shears, ...) is a "use item on block" action, not
+        // a placement — same as INTERACTIVE_BLOCKS below, it needs
+        // bot.activateBlock() rather than our own hand-rolled block_place
+        // write. That raw write omits fields activateBlock sends (notably
+        // bot.lookAt() beforehand and bot.swingArm() after — see inventory.js)
+        // which real servers can use to validate the interaction; the chest
+        // GUI case already proved activateBlock is the path that actually
+        // works, the bucket case proved the raw write often silently doesn't.
+        const heldIsBlock = bot.heldItem && !!bot.registry.blocksByName[bot.heldItem.name];
+        // Buckets (empty, water/lava/milk/powder-snow, and the mob-capture
+        // variants — anything *_bucket) are implemented entirely on the
+        // ITEM side in vanilla: BucketItem.use() does its own aim/raycast
+        // and handles both picking up and placing fluid, independent of
+        // whatever block is targeted. bot.activateBlock() ("Use Item On
+        // [block]" — correct for chests/doors/anything with block-side
+        // right-click behavior) reached this server fine (position,
+        // rotation, held item and target block were all verified correct
+        // live), but this server never falls through from "the targeted
+        // block has no special behavior" to "let the held item handle it,"
+        // so the fill/empty logic was never reached that way. Going
+        // straight to bot.activateItem() (the plain "Use Item" action,
+        // same as eating or drinking) invokes the bucket's own logic
+        // directly and sidesteps that broken fallthrough — confirmed
+        // working live.
+        // A block's own right-click behavior always wins over whatever's
+        // held — vanilla only falls through to the item (bucket included)
+        // when the block's own use() does nothing. A chest never does
+        // nothing, so it must open even with a bucket in hand; this check
+        // has to come BEFORE the bucket special-case below, not after, or
+        // holding a bucket would make every INTERACTIVE_BLOCKS target
+        // (chests, furnaces, crafting tables, ...) unopenable.
         if (targetBlock && INTERACTIVE_BLOCKS.has(targetBlock.name)) {
-          bot.activateBlock(targetBlock).catch(e => console.warn('activateBlock failed:', e.message));
+          bot.activateBlock(targetBlock, face).catch(e => console.warn('activateBlock failed:', e.message));
+          return;
+        }
+        if (targetBlock && bot.heldItem && bot.heldItem.name.endsWith('bucket') && !heldIsBlock) {
+          bot.activateItem(false);
+          return;
+        }
+        // Any other non-block item used on a block (hoes tilling soil,
+        // flint & steel, shears, bone meal, ...) — the INTERACTIVE_BLOCKS
+        // and bucket cases above have already been ruled out by this point.
+        if (targetBlock && !heldIsBlock) {
+          const heldBefore = bot.heldItem ? bot.heldItem.name : 'nothing';
+          console.log(`✋ activateBlock on ${targetBlock.name} at (${x},${y},${z}), held=${heldBefore} (slot ${bot.quickBarSlot})`);
+          // Diagnostic: two different actions need two different checks —
+          // emptying a full bucket changes the FACE block (air -> water),
+          // filling an empty one changes nothing in the world at all, only
+          // the HELD ITEM (bucket -> water_bucket). Checking only the face
+          // block (as this used to) is structurally blind to a fill ever
+          // working, since "air -> air" is exactly what a successful fill
+          // also looks like.
+          const dest = targetBlock.position.plus(new Vec3(face.x, face.y, face.z));
+          const beforeFace = bot.blockAt(dest)?.name;
+          bot.activateBlock(targetBlock, face)
+            .catch(e => console.warn('activateBlock failed:', e.message))
+            .finally(() => setTimeout(() => {
+              const afterFace = bot.blockAt(dest)?.name;
+              const heldAfter = bot.heldItem ? bot.heldItem.name : 'nothing';
+              console.log(`   -> held: ${heldBefore} -> ${heldAfter} | face block (${dest.x},${dest.y},${dest.z}): ${beforeFace} -> ${afterFace}`);
+            }, 300));
           return;
         }
         const now = Date.now();
         if (now - _placeLastMs < 250) return; // 250ms cooldown between placements
-        _placeLastMs = now;
-        const face = message.face || { x: 0, y: 1, z: 0 };
         let dir = 1;
         if (face.y < 0) dir = 0;
         else if (face.y > 0) dir = 1;
@@ -794,6 +956,7 @@ wss.on('connection', (ws) => {
         else if (face.z > 0) dir = 3;
         else if (face.x < 0) dir = 4;
         else if (face.x > 0) dir = 5;
+        _placeLastMs = now;
         try {
           bot._client.write('block_place', {
             hand: 0,
@@ -803,9 +966,30 @@ wss.on('connection', (ws) => {
             insideBlock: false,
             sequence: 0
           });
-          console.log(`🧱 Place block at (${x},${y},${z}) face=${dir}`);
+          console.log(`🧱 Place block at (${x},${y},${z}) on ${targetBlock ? targetBlock.name : '?'} face=${dir}, held=${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
         } catch (e) {
           console.warn('place_block failed:', e.message);
+        }
+      } else if (message.type === 'interact_entity' && botReady && bot) {
+        const entity = bot.entities[message.id];
+        // A bucket right-click that logs THIS instead of the 🧱 line above
+        // means an entity's hitbox (fish, squid, etc. are common in open
+        // water) won the crosshair before the water block did.
+        console.log(`🫵 interact_entity id=${message.id} -> ${entity ? entity.name : 'unknown'}, held=${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+        if (entity) {
+          if (entity.name === 'villager' || entity.name === 'wandering_trader') {
+            // bot.openEntity() fires the generic 'windowOpen' handler above
+            // (which also wires up the trade_list forwarding for merchant
+            // windows) — no separate "open trade UI" path needed.
+            bot.openEntity(entity).catch(e => console.warn('open trader failed:', e.message));
+          } else {
+            bot.activateEntity(entity).catch(e => console.warn('activateEntity failed:', e.message));
+          }
+        }
+      } else if (message.type === 'select_trade' && botReady && bot) {
+        const win = bot.currentWindow;
+        if (win && typeof message.index === 'number') {
+          bot.trade(win, message.index, 1).catch(e => console.warn('trade failed:', e.message));
         }
       } else if (message.type === 'window_click' && botReady && bot) {
         // bot.currentWindow is null when no container is open (player inventory only).
@@ -855,7 +1039,7 @@ wss.on('connection', (ws) => {
           if (!_digInProgress) {
             const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
             const block = bot.blockAt(pos);
-            if (block && block.name !== 'air') {
+            if (block && block.name !== 'air' && block.diggable) {
               _digInProgress = true;
               _digTarget = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
               console.log(`⛏️  Breaking ${block.name} at ${pos}`);
@@ -989,10 +1173,28 @@ wss.on('connection', (ws) => {
         // Apply look direction and store for physicsTick re-assertion.
         // THREE.js euler.y and mineflayer yaw share the same convention
         // (0 = north/−Z, π/2 = west, π = south/+Z) — no conversion needed.
+        //
+        // Pitch is NOT a no-op conversion like yaw, and was wrong before
+        // this fix: input.js's getMCPitch() returns -this._pitch, which is
+        // Notchian-style (positive = looking down) — confirmed empirically
+        // via `/data get entity RenderBot Rotation`, which read -38.85°
+        // (looking UP) while the bot was actually looking DOWN ~39° at an
+        // underground stream. mineflayer's bot.look()/bot.entity.pitch use
+        // the OPPOSITE internal convention (positive = looking up — see
+        // conversions.js's toNotchianPitch: pitch => toDegrees(-pitch)), so
+        // passing the client's Notchian-style value straight through
+        // mirrors the bot's vertical look direction on the server.
+        // Block-position-based actions (mining, placing, chest activation)
+        // never noticed because the client sends literal target block
+        // coordinates for those; anything that relies on the SERVER doing
+        // its own look-direction raycast — notably an empty bucket's fill
+        // logic — silently aimed the opposite way vertically and always
+        // missed.
         if (typeof yaw === 'number' && typeof pitch === 'number') {
+          const mcPitch = -pitch;
           _clientYaw = yaw;
-          _clientPitch = pitch;
-          bot.look(yaw, pitch, true);
+          _clientPitch = mcPitch;
+          bot.look(yaw, mcPitch, true);
         }
       }
     } catch (e) {

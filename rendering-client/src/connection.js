@@ -126,14 +126,28 @@ export class BridgeConnection {
     }
   }
 
-  sendPlayerInput(controls, yaw, pitch, targetedBlock, targetedFace) {
+  sendPlayerInput(controls, yaw, pitch, targetedBlock, targetedFace, targetedEntity) {
     this.send({ type: 'player_input', controls, yaw, pitch, targetedBlock });
     if (controls.pickBlock && targetedBlock)
       this.send({ type: 'pick_block', block: targetedBlock });
-    if (controls.placeBlock && targetedBlock && targetedFace)
-      this.send({ type: 'place_block', block: targetedBlock, face: targetedFace });
-    if (controls.placeBlock && !targetedBlock)
-      this.send({ type: 'use_item' });
+    // Vanilla treats attack/mine (left button held) and use-item (right
+    // button) as mutually exclusive — the real client never sends both for
+    // the same tick. Without this guard, mining through to reach a water
+    // source and then right-clicking to scoop it (left button still held
+    // from the dig) sent a block_dig AND a block_place/use-item action on
+    // the exact same block in the same tick; the server's anti-cheat
+    // sequence validation silently dropped one of them (the bucket never
+    // filled, with no error back to the client).
+    if (!controls.breakBlock) {
+      // An entity under the crosshair (e.g. a wandering trader) takes
+      // priority over the block behind it, same as vanilla right-click.
+      if (controls.placeBlock && targetedEntity)
+        this.send({ type: 'interact_entity', id: targetedEntity.id });
+      else if (controls.placeBlock && targetedBlock && targetedFace)
+        this.send({ type: 'place_block', block: targetedBlock, face: targetedFace });
+      else if (controls.placeBlock && !targetedBlock)
+        this.send({ type: 'use_item' });
+    }
   }
 
   sendClickSlot(slot, button) {

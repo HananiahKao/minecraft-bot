@@ -161,10 +161,10 @@
   <div id="metrics">Loading...</div>
 
   <div id="controls">
-    <span id="controls-toggle">▼ Controls</span>
-    <div id="controls-body">
+    <span id="controls-toggle">▶ Controls</span>
+    <div id="controls-body" style="display:none">
       <p>WASD - Move | Space - Jump | Shift - Sneak | Ctrl - Sprint</p>
-      <p>Mouse - Look | Click to lock pointer | Right-click - Place | F - Pick block</p>
+      <p>Mouse - Look | Click to lock pointer | Right-click - Place / Interact | F - Pick block</p>
       <p>Press ESC twice to release the mouse — the browser shows its own lock banner on the first press</p>
       <p>Scroll / 1-9 - Select hotbar slot</p>
     </div>
@@ -173,7 +173,7 @@
     (function() {
       const toggle = document.getElementById('controls-toggle');
       const body   = document.getElementById('controls-body');
-      let collapsed = false;
+      let collapsed = true;
       toggle.addEventListener('click', () => {
         collapsed = !collapsed;
         body.style.display  = collapsed ? 'none' : '';

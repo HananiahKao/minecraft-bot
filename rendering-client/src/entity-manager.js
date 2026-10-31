@@ -438,6 +438,32 @@ export class EntityManager {
     }
   }
 
+  // Nearest mob whose (approximate) bounding sphere the ray — camera
+  // position + look direction, both already in world space — passes
+  // through within maxDist. Approximate on purpose: a full per-bone hitbox
+  // match isn't needed just to pick "which entity am I looking at" for
+  // right-click interaction (trading, etc.), and this stays correct for
+  // both the real multi-bone models and the legacy box fallback alike.
+  findEntityOnRay(origin, dir, maxDist) {
+    let best = null;
+    for (const [id, entry] of this._mobs) {
+      const p = entry.group.position;
+      // Sphere centered roughly at chest height, not at the feet-anchored
+      // group origin — picking at the feet would make the cursor need to
+      // aim at the ground right at a mob's base to select it.
+      const ocx = origin.x - p.x, ocy = origin.y - (p.y + 0.9), ocz = origin.z - p.z;
+      const b = ocx * dir.x + ocy * dir.y + ocz * dir.z;
+      const RADIUS = 0.6;
+      const c = ocx * ocx + ocy * ocy + ocz * ocz - RADIUS * RADIUS;
+      const h = b * b - c;
+      if (h < 0) continue;
+      const t = -b - Math.sqrt(h);
+      if (t < 0 || t > maxDist) continue;
+      if (!best || t < best.distance) best = { id, mobType: entry.mobType, distance: t };
+    }
+    return best;
+  }
+
   // Remove all entities (e.g. on bot reconnect / dimension change)
   clear() {
     for (const id of [...this._items.keys()]) {

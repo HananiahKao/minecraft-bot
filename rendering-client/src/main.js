@@ -86,6 +86,7 @@ function init() {
   _windowScreen = new WindowScreen({
     onClose: () => { connection && connection.send({ type: 'close_window' }); },
     onClickSlot: (slot, button) => connection && connection.send({ type: 'window_click', slot, mouseButton: button, mode: 0 }),
+    onSelectTrade: (index) => connection && connection.send({ type: 'select_trade', index }),
   });
 
   _vitalsHud = new VitalsHud('vitals-hud');
@@ -134,6 +135,7 @@ function init() {
     if (connection && connection.isConnected && inputHandler) {
       const tb = renderer ? renderer.targetedBlock : null;
       const tf = renderer ? renderer.targetedFace : null;
+      const te = renderer ? renderer.targetedEntity : null;
       const controls = inputHandler.getControls();
       if (controls.inventoryToggle && _inventoryScreen) {
         if (_inventoryScreen.isOpen()) {
@@ -148,7 +150,7 @@ function init() {
         }
       }
       if (!_inventoryScreen || !_inventoryScreen.isOpen()) {
-        connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb, tf);
+        connection.sendPlayerInput(controls, inputHandler.getMCYaw(), inputHandler.getMCPitch(), tb, tf, te);
       }
       if (controls.slotChanged) {
         _heldSlot = controls.selectedSlot;
@@ -417,7 +419,7 @@ let _loadPhaseRecorded = false;
 let _initialLoadMs = null;
 let _metricsLastUpdate = 0;
 let _sessionStart = performance.now();
-let _metricsCollapsed = _isMobile; // collapsed by default on mobile
+let _metricsCollapsed = true; // collapsed by default everywhere
 
 // Per-second snapshot ring buffer (last 10 seconds)
 const SNAPSHOT_COUNT = 10;
@@ -491,6 +493,7 @@ function startUpdateLoop() {
         else if (msg.type === 'window_close')     { onWindowClose(); }
         else if (msg.type === 'window_update')    { onWindowUpdate(msg); }
         else if (msg.type === 'window_property')  { if (_windowScreen) _windowScreen.updateProperty(msg.property, msg.value); }
+        else if (msg.type === 'window_trades')    { if (_windowScreen) _windowScreen.setTrades(msg.trades); }
         else if (msg.type === 'error')            { onError(new Error(msg.message)); }
         else if (msg.type === 'block_update')     { onBlockUpdate(msg); }
         else if (msg.type === 'entity_spawn') {
@@ -572,7 +575,7 @@ function startUpdateLoop() {
       // _lastRafTimestamp already updated to timestamp above; use gap computed at frame top
       entityManager.tick(_lastFrameGap / 1000);
     }
-    renderer.updateRaycast();
+    renderer.updateRaycast(entityManager);
     renderer.updateBreakOverlay();
     renderer.render();
     const _dt_render = performance.now() - _t_render;

@@ -319,7 +319,10 @@ export class MinecraftRenderer {
   }
 
   // Call once per frame (before render). Updates targetedBlock and highlight box.
-  updateRaycast() {
+  // entityManager is optional — when given, also resolves targetedEntity
+  // (nearest mob under the crosshair within reach), used for interactions
+  // like trading, independent of block picking below.
+  updateRaycast(entityManager) {
     this._raycaster.setFromCamera(this._centerNDC, this.camera);
     const meshes = [
       ...this.chunkMeshes.values(),
@@ -328,6 +331,16 @@ export class MinecraftRenderer {
       ...this.chunkMeshesTexT.values(),
     ];
     const hits = this._raycaster.intersectObjects(meshes, false);
+    const blockDist = hits.length > 0 ? hits[0].distance : Infinity;
+    if (entityManager) {
+      const ray = this._raycaster.ray;
+      const entityHit = entityManager.findEntityOnRay(ray.origin, ray.direction, this._raycaster.far);
+      // An entity standing in front of the targeted block face wins — a
+      // block hit behind it shouldn't be reachable anyway.
+      this.targetedEntity = (entityHit && entityHit.distance < blockDist) ? entityHit : null;
+    } else {
+      this.targetedEntity = null;
+    }
     if (hits.length === 0) {
       this._highlightMesh.visible = false;
       this.targetedBlock = null;
