@@ -116,6 +116,23 @@
       z-index: 100;
     }
 
+    #vitals-hud {
+      position: absolute;
+      bottom: 76px; /* hotbar is 66px tall at 3x scale + 10px gap above the 10px hotbar offset */
+      left: 50%;
+      transform: translateX(-50%);
+      width: 546px; /* matches the 3x-scaled hotbar.png width (182px native) */
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 2px;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #vitals-hud .vitals-row {
+      display: flex;
+      height: 27px;
+    }
+
     #crosshair {
       position: absolute;
       top: 50%;
@@ -138,6 +155,7 @@
 <body>
   <div id="canvas"></div>
   <div id="crosshair"></div>
+  <div id="vitals-hud"></div>
   <div id="hotbar"></div>
 
   <div id="status">Connecting...</div>

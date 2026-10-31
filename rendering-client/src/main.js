@@ -12,6 +12,7 @@ import { InventoryScreen } from './inventory.js';
 import { WindowScreen } from './window-screen.js';
 import { EntityManager } from './entity-manager.js';
 import { hasItemIcon, itemIconUrl } from './item-icon.js';
+import { VitalsHud } from './vitals-hud.js';
 
 let renderer = null;
 let entityManager = null;
@@ -22,6 +23,7 @@ let _hotbarSlots = Array(9).fill(null); // { name, count } or null
 let _heldSlot = 0;
 let _inventoryScreen = null;
 let _windowScreen = null;
+let _vitalsHud = null;
 const INPUT_SEND_INTERVAL = 50; // one Minecraft tick
 
 // Adaptive render radius: smaller on mobile / low-memory devices.
@@ -85,6 +87,8 @@ function init() {
     onClose: () => { connection && connection.send({ type: 'close_window' }); },
     onClickSlot: (slot, button) => connection && connection.send({ type: 'window_click', slot, mouseButton: button, mode: 0 }),
   });
+
+  _vitalsHud = new VitalsHud('vitals-hud');
 
   connection = new BridgeConnection(
     onChunkReceived,
@@ -333,32 +337,46 @@ function onWindowUpdate(msg) {
   if (_windowScreen && _windowScreen.isOpen()) _windowScreen.updateSlots(msg.slots, msg.playerSlots, msg.cursorItem);
 }
 
+// Vanilla's own hotbar.png (182×22 native) scaled 3× to match the heart/
+// food/armor icon scale used by vitals-hud.js, with hotbar_selection.png
+// (24×23 native) overlaid on the held slot — same sprites vanilla draws.
+const HOTBAR_SCALE = 3;
+const HOTBAR_SLOT = 20 * HOTBAR_SCALE; // native 20px-wide slot
+const HOTBAR_HUD = '/assets/textures/gui/hud';
+
 function updateHotbar() {
   const el = document.getElementById('hotbar');
   if (!el) return;
-  el.innerHTML = _hotbarSlots.map((item, i) => {
-    const active = i === _heldSlot;
+  el.style.position = 'relative';
+  el.style.width = `${182 * HOTBAR_SCALE}px`;
+  el.style.height = `${22 * HOTBAR_SCALE}px`;
+  el.style.backgroundImage = `url(${HOTBAR_HUD}/hotbar.png)`;
+  el.style.backgroundSize = `${182 * HOTBAR_SCALE}px ${22 * HOTBAR_SCALE}px`;
+  el.style.imageRendering = 'pixelated';
+  el.style.gap = '0';
+
+  const selLeft = _heldSlot * HOTBAR_SLOT - 2 * HOTBAR_SCALE;
+  const selectionHtml = `<div style="position:absolute;left:${selLeft}px;top:${-2 * HOTBAR_SCALE}px;width:${24 * HOTBAR_SCALE}px;height:${23 * HOTBAR_SCALE}px;background-image:url(${HOTBAR_HUD}/hotbar_selection.png);background-size:contain;image-rendering:pixelated;pointer-events:none;"></div>`;
+
+  const slotsHtml = _hotbarSlots.map((item, i) => {
     const hasIcon = item && hasItemIcon(item.name);
     const label = (item && !hasIcon) ? item.name.replace(/_/g, ' ') : '';
     const iconHtml = hasIcon
-      ? `<div style="width:32px;height:32px;background-image:url(${itemIconUrl(item.name)});background-size:contain;background-repeat:no-repeat;background-position:center;image-rendering:pixelated;pointer-events:none;"></div>`
-      : '';
+      ? `<div style="width:${16 * HOTBAR_SCALE}px;height:${16 * HOTBAR_SCALE}px;background-image:url(${itemIconUrl(item.name)});background-size:contain;background-repeat:no-repeat;background-position:center;image-rendering:pixelated;pointer-events:none;"></div>`
+      : `<div style="font-size:8px;color:#ccc;text-align:center;line-height:1.1;pointer-events:none;">${label}</div>`;
     let durBar = '';
     if (item && item.maxDurability > 0) {
       const pct = Math.max(0, 1 - item.durabilityUsed / item.maxDurability);
       const col = pct > 0.6 ? '#5f5' : pct > 0.3 ? '#ff5' : '#f55';
-      durBar = `<div style="position:absolute;bottom:2px;left:3px;right:3px;height:2px;background:#111;border-radius:1px;"><div style="height:100%;width:${Math.round(pct*100)}%;background:${col};border-radius:1px;"></div></div>`;
+      durBar = `<div style="position:absolute;bottom:3px;left:4px;right:4px;height:2px;background:#111;"><div style="height:100%;width:${Math.round(pct*100)}%;background:${col};"></div></div>`;
     }
     const countBadge = (item && item.count > 1)
-      ? `<div style="position:absolute;bottom:4px;right:3px;font-size:10px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;">${item.count}</div>`
+      ? `<div style="position:absolute;bottom:0;right:2px;font-size:11px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000;pointer-events:none;">${item.count}</div>`
       : '';
-    return `<div style="
-      width:44px;height:44px;border:2px solid ${active ? '#ffcc00' : '#555'};
-      background:rgba(0,0,0,0.6);border-radius:3px;display:flex;flex-direction:column;
-      align-items:center;justify-content:center;font-size:9px;color:${active ? '#ffcc00' : '#aaa'};
-      text-align:center;line-height:1.2;overflow:hidden;padding:2px;box-sizing:border-box;
-      position:relative;cursor:pointer" data-slot="${i}">${iconHtml}${label}${countBadge}${durBar}</div>`;
+    return `<div style="position:absolute;left:${i * HOTBAR_SLOT}px;top:0;width:${HOTBAR_SLOT}px;height:${22 * HOTBAR_SCALE}px;display:flex;align-items:center;justify-content:center;cursor:pointer;" data-slot="${i}">${iconHtml}${countBadge}${durBar}</div>`;
   }).join('');
+
+  el.innerHTML = selectionHtml + slotsHtml;
   el.querySelectorAll('[data-slot]').forEach(div => {
     div.onclick = () => {
       const slot = parseInt(div.dataset.slot);
@@ -485,6 +503,9 @@ function startUpdateLoop() {
           }
         }
         else if (msg.type === 'entity_destroy')   { if (entityManager) entityManager.destroy(msg.id); }
+        else if (msg.type === 'vitals') {
+          if (_vitalsHud) _vitalsHud.update(msg);
+        }
         else if (msg.type === 'dig_progress') {
           if (renderer) {
             if (msg.x === null) renderer.clearDig();

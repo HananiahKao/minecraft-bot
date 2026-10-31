@@ -235,6 +235,7 @@ function initBot() {
     // Send already-loaded chunks around spawn
     requestChunksAround(bot.entity.position);
     broadcastHotbar();
+    broadcastVitals();
 
     // Stream bot position and trigger chunk updates as bot crosses chunk boundaries
     if (positionBroadcastInterval) clearInterval(positionBroadcastInterval);
@@ -382,6 +383,10 @@ function initBot() {
     broadcastMessage({ type: 'entity_destroy', id: entity.id });
   });
 
+  bot.on('health', () => broadcastVitals());
+  bot.on('breath', () => broadcastVitals());
+  bot.on('entityAttributes', (entity) => { if (entity === bot.entity) broadcastVitals(); });
+
   bot.on('playerCollect', () => { broadcastHotbar(); broadcastInventory(); });
   bot.on('heldItemChanged', () => broadcastHotbar());
   // inventory plugin is only available after spawn
@@ -505,6 +510,22 @@ function broadcastMessage(message) {
   } catch (e) {
     console.error(`Failed to broadcast:`, e.message);
   }
+}
+
+// Health/food/armor/oxygen HUD values, all in one message so the client
+// never has to reconcile partial updates from different packets.
+function broadcastVitals() {
+  if (!bot || !bot.entity) return;
+  const attrs = bot.entity.attributes || {};
+  const armorAttr = attrs['minecraft:generic.armor'] || attrs['generic.armor'];
+  broadcastMessage({
+    type: 'vitals',
+    health: bot.health,
+    food: bot.food,
+    saturation: bot.foodSaturation,
+    armor: armorAttr ? armorAttr.value : 0,
+    oxygen: bot.oxygenLevel != null ? bot.oxygenLevel : 20,
+  });
 }
 
 function broadcastHotbar() {
