@@ -241,6 +241,15 @@ const NON_OCCLUDING_BLOCKS = new Set([
   'vine', 'scaffolding',
   'torch', 'wall_torch', 'soul_torch', 'redstone_torch',
   'tripwire', 'tripwire_hook',
+  // Leaves render as a cutout (alphaTest) full cube, not a blended
+  // translucent one — same opaque render pass as stone — but vanilla
+  // never culls a neighbor's face against them, since large swaths of
+  // the leaves texture are fully transparent. Without this, a log face
+  // touching leaves (or any other opaque block behind foliage) was being
+  // culled as if the leaves were solid, making it vanish.
+  'oak_leaves', 'spruce_leaves', 'birch_leaves', 'jungle_leaves',
+  'acacia_leaves', 'cherry_leaves', 'dark_oak_leaves', 'mangrove_leaves',
+  'azalea_leaves', 'flowering_azalea_leaves',
 ]);
 
 // ── Block model table ─────────────────────────────────────────────────────────
