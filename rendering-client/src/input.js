@@ -123,7 +123,7 @@ export class InputHandler {
     });
 
     document.addEventListener('mousedown', (e) => {
-      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay')) return;
+      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay, #controls')) return;
       if (!this.isPointerLocked) {
         document.body.requestPointerLock();
         return;
@@ -162,7 +162,7 @@ export class InputHandler {
     });
 
     document.addEventListener('click', (e) => {
-      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay')) return;
+      if (e.target.closest('#metrics, #inventory-screen, #window-screen, #mobile-overlay, #controls')) return;
       if (!this.isPointerLocked) document.body.requestPointerLock();
     });
 
