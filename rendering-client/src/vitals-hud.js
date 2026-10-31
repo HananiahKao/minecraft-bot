@@ -34,10 +34,19 @@ function renderPairBar(container, value, fullUrl, halfUrl, emptyUrl) {
 export class VitalsHud {
   constructor(containerId) {
     this.root = document.getElementById(containerId);
+    // #vitals-hud is already position:absolute via CSS, which is enough to
+    // serve as the positioning context for the rows below — do NOT set an
+    // inline position here, same inline-vs-stylesheet trap as #hotbar.
+    // Each row is independently absolutely-positioned (bottom:0 = the row
+    // directly above the hotbar, bottom:29 = the row above that). Hiding
+    // armor/air must NOT reflow the health/food row — a flex column with
+    // display:none siblings does exactly that (every toggle shifts the
+    // other rows), which is what made health/food appear to "jump". Fixed
+    // offsets mean toggling visibility only ever affects that one row.
     this.root.innerHTML = `
-      <div class="vitals-row" id="vh-armor" style="justify-content:flex-start;"></div>
-      <div class="vitals-row" id="vh-air" style="justify-content:flex-end;"></div>
-      <div class="vitals-row" style="justify-content:space-between;">
+      <div class="vitals-row" id="vh-armor" style="position:absolute;left:0;bottom:29px;justify-content:flex-start;"></div>
+      <div class="vitals-row" id="vh-air" style="position:absolute;right:0;bottom:29px;justify-content:flex-end;"></div>
+      <div class="vitals-row" style="position:absolute;left:0;right:0;bottom:0;justify-content:space-between;">
         <div id="vh-health" style="display:flex;"></div>
         <div id="vh-food" style="display:flex;"></div>
       </div>

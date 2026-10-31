@@ -172,6 +172,15 @@ export class InputHandler {
       if (!this.isPointerLocked) { this.clearControls(); this._breakHeld = false; }
     });
 
+    // Diagnostic only: we never call requestPointerLock() outside a direct
+    // click/mousedown user gesture, so a rejection here isn't us retrying —
+    // it's almost always the browser's own cooldown right after an Escape
+    // release (Chrome/Firefox require Escape to be held, not tapped, to
+    // exit pointer lock, and briefly refuse re-lock attempts afterward).
+    document.addEventListener('pointerlockerror', () => {
+      console.warn('[input] pointer lock request rejected by the browser (likely its post-Escape cooldown)');
+    });
+
     window.addEventListener('blur', () => this.clearControls());
   }
 

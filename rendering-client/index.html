@@ -122,9 +122,7 @@
       left: 50%;
       transform: translateX(-50%);
       width: 546px; /* matches the 3x-scaled hotbar.png width (182px native) */
-      display: flex;
-      flex-direction: column-reverse;
-      gap: 2px;
+      height: 56px; /* two stacked 27px rows, same fixed box regardless of which rows are visible */
       pointer-events: none;
       z-index: 100;
     }
@@ -167,6 +165,7 @@
     <div id="controls-body">
       <p>WASD - Move | Space - Jump | Shift - Sneak | Ctrl - Sprint</p>
       <p>Mouse - Look | Click to lock pointer | Right-click - Place | F - Pick block</p>
+      <p>Hold ESC (don't just tap it) to release the mouse — your browser requires this</p>
       <p>Scroll / 1-9 - Select hotbar slot</p>
     </div>
   </div>

@@ -347,7 +347,10 @@ const HOTBAR_HUD = '/assets/textures/gui/hud';
 function updateHotbar() {
   const el = document.getElementById('hotbar');
   if (!el) return;
-  el.style.position = 'relative';
+  // #hotbar's CSS rule already sets position:absolute + left:50%/translateX(-50%)
+  // to center it — do NOT set el.style.position here, it's an inline style that
+  // overrides the stylesheet rule and drops the element into normal document
+  // flow, which is what pushed it off-screen.
   el.style.width = `${182 * HOTBAR_SCALE}px`;
   el.style.height = `${22 * HOTBAR_SCALE}px`;
   el.style.backgroundImage = `url(${HOTBAR_HUD}/hotbar.png)`;
