@@ -174,9 +174,11 @@ export class InputHandler {
 
     // Diagnostic only: we never call requestPointerLock() outside a direct
     // click/mousedown user gesture, so a rejection here isn't us retrying —
-    // it's almost always the browser's own cooldown right after an Escape
-    // release (Chrome/Firefox require Escape to be held, not tapped, to
-    // exit pointer lock, and briefly refuse re-lock attempts afterward).
+    // it's the browser's own cooldown right after an Escape release.
+    // (The two-step Escape UX itself — first press dismisses Chrome's own
+    // "pointer locked" banner, second press actually releases the lock —
+    // is chrome-level UI outside the page entirely; there's nothing here
+    // that sees or can shortcut it.)
     document.addEventListener('pointerlockerror', () => {
       console.warn('[input] pointer lock request rejected by the browser (likely its post-Escape cooldown)');
     });
