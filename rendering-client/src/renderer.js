@@ -56,30 +56,56 @@ const CHUNK_TEXTURED_TRANSPARENT_MATERIAL = new THREE.MeshLambertMaterial({
 // tiling crack textures — one shared material per stage, texture swapped
 // in as digging progresses). Loaded once; a block not yet broken just
 // never shows one, same as any other not-yet-loaded asset in this file.
+//
+// The raw PNGs are grayscale, NOT black: crack pixels are (61,61,61) or
+// (155,155,155) at full alpha, background is near-white at near-zero
+// alpha. Multiply-blending that gray against the block's own (often
+// warm-colored, e.g. sand/dirt) base color preserves the base's hue and
+// only dims it — the 155-gray pixels barely darken a bright block at
+// all, so the crack reads as a light tint of the block's own color
+// instead of a dark mark. Vanilla's actual look is a hue-independent
+// black decal whose opacity follows the crack density. We rebuild that
+// here: draw each PNG into a canvas, recolor every pixel to pure black
+// with alpha = 255 - luminance (dark gray -> mostly opaque black,
+// near-white background -> alpha ~0, i.e. invisible), and use normal
+// alpha blending so the result darkens toward black regardless of what
+// color the underlying block is.
+function buildBreakStageTexture(stage, onReady) {
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const luminance = (d[i] + d[i + 1] + d[i + 2]) / 3;
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+      d[i + 3] = 255 - luminance;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.needsUpdate = true;
+    onReady(tex);
+  };
+  img.src = `/assets/textures/break/destroy_stage_${stage}.png`;
+}
+
 const _breakStageMaterials = [];
 for (let stage = 0; stage <= 9; stage++) {
-  const tex = new THREE.TextureLoader().load(`/assets/textures/break/destroy_stage_${stage}.png`, (t) => {
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.wrapS = THREE.RepeatWrapping;
-    t.wrapT = THREE.RepeatWrapping;
-  });
-  _breakStageMaterials.push(new THREE.MeshBasicMaterial({
-    map: tex,
+  const material = new THREE.MeshBasicMaterial({
     transparent: true,
-    // Vanilla draws this as a multiplicative darkening pass, not an
-    // opaque decal: the texture's real pixels are mid/dark gray at FULL
-    // alpha (checked directly — (61,61,61) and (155,155,155), alpha 255),
-    // with near-white at near-zero alpha for "no crack yet". Normal
-    // alpha blending shows those gray values as flat gray squares;
-    // multiply blending instead darkens whatever's already rendered by
-    // that fraction (white = identity = no visible change, the darker
-    // tones push the real block texture toward black), which is what
-    // produces the familiar near-black crack look.
-    blending: THREE.MultiplyBlending,
     depthWrite: false, // decal on top of the block's own faces, never occludes anything
     polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, // avoid z-fighting at the identical depth
-  }));
+  });
+  _breakStageMaterials.push(material);
+  buildBreakStageTexture(stage, (tex) => { material.map = tex; material.needsUpdate = true; });
 }
 const _BREAK_OVERLAY_GEO = new THREE.BoxGeometry(1.002, 1.002, 1.002);
 
