@@ -514,17 +514,34 @@ function broadcastMessage(message) {
 
 // Health/food/armor/oxygen HUD values, all in one message so the client
 // never has to reconcile partial updates from different packets.
+let _lastOxygen = 20;
 function broadcastVitals() {
   if (!bot || !bot.entity) return;
   const attrs = bot.entity.attributes || {};
   const armorAttr = attrs['minecraft:generic.armor'] || attrs['generic.armor'];
+  const oxygen = bot.oxygenLevel != null ? bot.oxygenLevel : 20;
+  const inWater = !!bot.entity.isInWater;
+
+  // oxygen is authoritative from the server's own entity metadata (air_supply),
+  // not something we compute — so a drop with isInWater false isn't a display
+  // bug, it means the server itself thinks the bot's head is submerged even
+  // though it doesn't look that way client-side. Most likely cause: the
+  // bridge's reported position lagging/desyncing from what the 3D client
+  // renders. Logged here (not on the client) because this is the one place
+  // with the authoritative values to compare.
+  if (oxygen < _lastOxygen && !inWater) {
+    console.warn(`[vitals] oxygen dropped (${_lastOxygen} -> ${oxygen}) while isInWater=false, pos=${bot.entity.position.toString()}`);
+  }
+  _lastOxygen = oxygen;
+
   broadcastMessage({
     type: 'vitals',
     health: bot.health,
     food: bot.food,
     saturation: bot.foodSaturation,
     armor: armorAttr ? armorAttr.value : 0,
-    oxygen: bot.oxygenLevel != null ? bot.oxygenLevel : 20,
+    oxygen,
+    inWater,
   });
 }
 
