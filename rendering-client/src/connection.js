@@ -127,9 +127,16 @@ export class BridgeConnection {
   }
 
   sendPlayerInput(controls, yaw, pitch, targetedBlock, targetedFace, targetedEntity) {
-    this.send({ type: 'player_input', controls, yaw, pitch, targetedBlock });
+    // An entity under the crosshair takes priority over the block behind
+    // it, same as vanilla: you can't mine through a mob, so suppress the
+    // block target entirely while an entity is targeted.
+    const effectiveTargetedBlock = targetedEntity ? null : targetedBlock;
+    this.send({ type: 'player_input', controls, yaw, pitch, targetedBlock: effectiveTargetedBlock });
     if (controls.pickBlock && targetedBlock)
       this.send({ type: 'pick_block', block: targetedBlock });
+    if (controls.breakBlock && targetedEntity) {
+      this.send({ type: 'attack_entity', id: targetedEntity.id });
+    }
     // Vanilla treats attack/mine (left button held) and use-item (right
     // button) as mutually exclusive — the real client never sends both for
     // the same tick. Without this guard, mining through to reach a water
