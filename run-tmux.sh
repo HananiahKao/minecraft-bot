@@ -13,8 +13,22 @@ if [ ! -d "$REPO_DIR/scripts" ] || [ ! -f "$REPO_DIR/scripts/restart-minecraft.s
     exit 1
 fi
 
-# Kill existing session if it exists
+# Kill existing session, and anything it (or a previous run of this
+# script) left behind. Killing the tmux session alone only kills processes
+# still attached to it — a watchdog that survived a prior crash/kill can
+# end up reparented to init with no tty, invisible to `tmux kill-session`,
+# and will keep fighting the new one over the same port. See restart-
+# minecraft.sh's own singleton lock for the same problem from its side.
+echo "🧹 Cleaning up any previous instance..."
 tmux kill-session -t $SESSION_NAME 2>/dev/null || true
+pkill -f "$REPO_DIR/scripts/restart-minecraft.sh" 2>/dev/null || true
+pkill -f "$REPO_DIR/scripts/restart-bridge.sh" 2>/dev/null || true
+pkill -f "$REPO_DIR/scripts/restart-client.sh" 2>/dev/null || true
+pkill -f "$REPO_DIR/scripts/start-agents.sh" 2>/dev/null || true
+for port in 25565 8080; do
+    pids=$(lsof -ti ":$port" 2>/dev/null)
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null
+done
 sleep 1
 
 # Create new tmux session with 3 windows
