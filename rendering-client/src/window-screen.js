@@ -11,35 +11,10 @@ import { makeItemVisual } from './item-icon.js';
 const SLOT_SIZE = 52;
 const GAP = 4;
 
-// Parse Mineflayer window title — may be a JSON chat component like {"translate":"container.crafting"}
-const TITLE_MAP = {
-  'container.crafting': 'Crafting Table',
-  'container.chest': 'Chest',
-  'container.chestDouble': 'Large Chest',
-  'container.shulkerBox': 'Shulker Box',
-  'container.furnace': 'Furnace',
-  'container.blast_furnace': 'Blast Furnace',
-  'container.smoker': 'Smoker',
-  'container.enchant': 'Enchanting Table',
-  'container.anvil': 'Anvil',
-  'container.grindstone_title': 'Grindstone',
-  'container.cartography_table': 'Cartography Table',
-  'container.loom': 'Loom',
-  'container.stonecutter': 'Stonecutter',
-  'container.smithing': 'Smithing Table',
-  'container.beacon': 'Beacon',
-  'container.hopper': 'Hopper',
-  'container.dispenser': 'Dispenser',
-  'container.dropper': 'Dropper',
-  'container.barrel': 'Barrel',
-  'container.brewing': 'Brewing Stand',
-};
+// The bridge resolves the window title (translate keys, NBT chat components) to plain text
+// via prismarine-chat before sending, so the client just needs a fallback for missing titles.
 function parseTitle(raw) {
-  try {
-    const obj = JSON.parse(raw);
-    const key = obj.translate || obj.text || '';
-    return TITLE_MAP[key] || key.split('.').pop().replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-  } catch { return raw || 'Container'; }
+  return raw || 'Container';
 }
 
 // How many columns to use when auto-laying-out an unknown window type
