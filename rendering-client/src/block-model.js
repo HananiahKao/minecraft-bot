@@ -90,10 +90,15 @@ export function resolveModels(blockModelsData, name, props) {
         return model ? [model] : null;
       }
     }
-    // No key matched this block's actual props (e.g. a property combo the
-    // data doesn't enumerate) — fall back to the first variant rather than
-    // rendering nothing.
-    const first = pickModel(Object.values(entry.variants)[0]);
+    // No key matched this block's actual props (e.g. props were missing
+    // entirely because an upstream message omitted them) — fall back to the
+    // variant closest to vanilla's default rather than whichever happens to
+    // be first in the data (which for axis blocks like logs is 'axis=x',
+    // i.e. horizontal, not the common vertical default).
+    const fallbackKey = '' in entry.variants ? ''
+      : 'axis=y' in entry.variants ? 'axis=y'
+      : Object.keys(entry.variants)[0];
+    const first = pickModel(entry.variants[fallbackKey]);
     return first ? [first] : null;
   }
 
