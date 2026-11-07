@@ -44,6 +44,26 @@ const _chunkPropsData = new Map(); // chunkKey → Map<"lx,y,lz", props> — blo
 const _chunkEdgeCache = new Map(); // chunkKey → { nx, px, nz, pz } pre-built edge slices for O(1) buildEdges
 const _neighborRebuildQueue = new Set(); // chunk keys needing seam-fix rebuild (processed lazily when chunkQueue drains)
 
+// Backs renderer.js's voxel-grid raycast (DDA) — looks up a block name by
+// world coordinate from the same chunk data used to build the meshes.
+function getBlockNameAt(x, y, z) {
+  const cx = Math.floor(x / 16);
+  const cz = Math.floor(z / 16);
+  const lx = ((x % 16) + 16) % 16;
+  const lz = ((z % 16) + 16) % 16;
+  return _chunkBlockData.get(`${cx},${cz}`)?.get(`${lx},${y},${lz}`);
+}
+
+// Backs renderer.js's per-block selection shapes (ladder facing, etc.) —
+// same coordinate scheme as getBlockNameAt, from _chunkPropsData.
+function getBlockPropsAt(x, y, z) {
+  const cx = Math.floor(x / 16);
+  const cz = Math.floor(z / 16);
+  const lx = ((x % 16) + 16) % 16;
+  const lz = ((z % 16) + 16) % 16;
+  return _chunkPropsData.get(`${cx},${cz}`)?.get(`${lx},${y},${lz}`);
+}
+
 // ── Event log ────────────────────────────────────────────────────────────────
 const EVENT_MAX = 100;
 const _events = [];
@@ -74,6 +94,8 @@ let _jumpPeakTime = null;
 function init() {
   const container = document.getElementById('canvas');
   renderer = new MinecraftRenderer(container);
+  renderer.setBlockLookup(getBlockNameAt);
+  renderer.setBlockPropsLookup(getBlockPropsAt);
   window._r = renderer;
   entityManager = new EntityManager(renderer.scene);
   inputHandler = new InputHandler(renderer.camera);

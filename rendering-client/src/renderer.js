@@ -8,6 +8,37 @@
 
 import * as THREE from 'three';
 import { isMobile } from './mobile.js';
+import { LIQUID_BLOCKS, SELECTION_SHAPES } from './block-shapes.js';
+
+// Ray-vs-AABB slab test, box in world coordinates. Returns the entry
+// { t, face } (face = outward unit normal of the side entered) or null if
+// the ray misses the box, or exits it behind the ray's origin.
+function rayBoxHit(ox, oy, oz, dx, dy, dz, box) {
+  let tEnter = -Infinity, tExit = Infinity;
+  let hitAxis = null, hitSign = 0;
+  const axes = [
+    ['x', ox, dx, box.x0, box.x1],
+    ['y', oy, dy, box.y0, box.y1],
+    ['z', oz, dz, box.z0, box.z1],
+  ];
+  for (const [axis, o, d, lo, hi] of axes) {
+    if (Math.abs(d) < 1e-12) {
+      if (o < lo || o > hi) return null;
+      continue;
+    }
+    const t0 = (lo - o) / d;
+    const t1 = (hi - o) / d;
+    const near = Math.min(t0, t1);
+    const far = Math.max(t0, t1);
+    if (near > tEnter) { tEnter = near; hitAxis = axis; hitSign = d > 0 ? -1 : 1; }
+    if (far < tExit) tExit = far;
+    if (tEnter > tExit) return null;
+  }
+  if (tExit < 0) return null;
+  const face = { x: 0, y: 0, z: 0 };
+  if (hitAxis) face[hitAxis] = hitSign;
+  return { t: tEnter >= 0 ? tEnter : tExit, face };
+}
 
 const CHUNK_MATERIAL = new THREE.MeshLambertMaterial({
   vertexColors: true,
@@ -318,22 +349,102 @@ export class MinecraftRenderer {
     return n;
   }
 
+  // Supplies block names by world coordinate (backed by main.js's
+  // _chunkBlockData) — call once at startup, before the first updateRaycast().
+  setBlockLookup(fn) { this._getBlockName = fn; }
+
+  // Supplies block state props (facing, etc.) by world coordinate (backed by
+  // main.js's _chunkPropsData) — needed to pick the right SELECTION_SHAPES
+  // box for blocks whose shape depends on orientation (e.g. ladder facing).
+  setBlockPropsLookup(fn) { this._getBlockProps = fn; }
+
+  // Voxel-grid raycast (Amanatides–Woo DDA): walks the block grid directly,
+  // one cell at a time, instead of hit-testing rendered mesh triangles.
+  // Mesh-triangle raycasting has inherent boundary ambiguity — at a seam
+  // between two coplanar blocks (e.g. two stacked logs), it can
+  // nondeterministically return either neighbor frame-to-frame from plain
+  // float rounding, even with a perfectly still crosshair. DDA has none of
+  // that: the same ray always walks the same sequence of grid cells, and
+  // each cell's own shape is tested in isolation — there's never a tie
+  // between two different blocks' geometry for the same ray point.
+  //
+  // Liquids (LIQUID_BLOCKS) are skipped outright — matches vanilla's
+  // ClipContext.Fluid.NONE for the crosshair outline, so standing in or
+  // aiming through water never targets the water itself.
+  //
+  // Blocks with a SELECTION_SHAPES entry (e.g. ladder) are tested against
+  // their real selection box instead of the full cell — deliberately NOT
+  // the block's rendered model (which can be a zero-thickness decal, the
+  // wrong thing to raycast against); a miss there falls through and the
+  // walk continues past the block, same as vanilla's per-block VoxelShape
+  // test in Level#clip. Everything else is treated as a full cube.
+  //
+  // Returns { x, y, z, face, distance } for the first cell actually hit
+  // within maxDist, or null.
+  _raycastBlocks(origin, direction, maxDist) {
+    if (!this._getBlockName) return null;
+
+    let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+    const stepX = direction.x > 0 ? 1 : direction.x < 0 ? -1 : 0;
+    const stepY = direction.y > 0 ? 1 : direction.y < 0 ? -1 : 0;
+    const stepZ = direction.z > 0 ? 1 : direction.z < 0 ? -1 : 0;
+
+    // tDelta: ray distance to cross one full cell on that axis.
+    // tMax: ray distance to the NEXT grid line on that axis from here.
+    const tDelta = {
+      x: stepX !== 0 ? Math.abs(1 / direction.x) : Infinity,
+      y: stepY !== 0 ? Math.abs(1 / direction.y) : Infinity,
+      z: stepZ !== 0 ? Math.abs(1 / direction.z) : Infinity,
+    };
+    const tMax = {
+      x: stepX > 0 ? (x + 1 - origin.x) * tDelta.x : stepX < 0 ? (origin.x - x) * tDelta.x : Infinity,
+      y: stepY > 0 ? (y + 1 - origin.y) * tDelta.y : stepY < 0 ? (origin.y - y) * tDelta.y : Infinity,
+      z: stepZ > 0 ? (z + 1 - origin.z) * tDelta.z : stepZ < 0 ? (origin.z - z) * tDelta.z : Infinity,
+    };
+
+    let face = null;
+    let t = 0;
+    while (t <= maxDist) {
+      const name = this._getBlockName(x, y, z);
+      if (name && !LIQUID_BLOCKS.has(name)) {
+        const shapeFn = SELECTION_SHAPES[name];
+        if (!shapeFn) {
+          return { x, y, z, face, distance: t };
+        }
+        const props = this._getBlockProps ? this._getBlockProps(x, y, z) : undefined;
+        let best = null;
+        for (const b of shapeFn(props)) {
+          const box = { x0: x + b.x0, y0: y + b.y0, z0: z + b.z0, x1: x + b.x1, y1: y + b.y1, z1: z + b.z1 };
+          const hit = rayBoxHit(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z, box);
+          if (hit && hit.t <= maxDist && (!best || hit.t < best.t)) best = hit;
+        }
+        if (best) return { x, y, z, face: best.face, distance: best.t };
+        // Ray missed this block's real shape (passed through the empty
+        // part of the cell) — fall through and keep walking the grid.
+      }
+
+      if (tMax.x < tMax.y && tMax.x < tMax.z) {
+        t = tMax.x; x += stepX; tMax.x += tDelta.x; face = { x: -stepX, y: 0, z: 0 };
+      } else if (tMax.y < tMax.z) {
+        t = tMax.y; y += stepY; tMax.y += tDelta.y; face = { x: 0, y: -stepY, z: 0 };
+      } else {
+        t = tMax.z; z += stepZ; tMax.z += tDelta.z; face = { x: 0, y: 0, z: -stepZ };
+      }
+    }
+    return null;
+  }
+
   // Call once per frame (before render). Updates targetedBlock and highlight box.
   // entityManager is optional — when given, also resolves targetedEntity
   // (nearest mob under the crosshair within reach), used for interactions
   // like trading, independent of block picking below.
   updateRaycast(entityManager) {
     this._raycaster.setFromCamera(this._centerNDC, this.camera);
-    const meshes = [
-      ...this.chunkMeshes.values(),
-      ...this.chunkMeshesT.values(),
-      ...this.chunkMeshesTex.values(),
-      ...this.chunkMeshesTexT.values(),
-    ];
-    const hits = this._raycaster.intersectObjects(meshes, false);
-    const blockDist = hits.length > 0 ? hits[0].distance : Infinity;
+    const ray = this._raycaster.ray;
+    const blockHit = this._raycastBlocks(ray.origin, ray.direction, this._raycaster.far);
+    const blockDist = blockHit ? blockHit.distance : Infinity;
+
     if (entityManager) {
-      const ray = this._raycaster.ray;
       const entityHit = entityManager.findEntityOnRay(ray.origin, ray.direction, this._raycaster.far);
       // An entity standing in front of the targeted block face wins — a
       // block hit behind it shouldn't be reachable anyway.
@@ -341,61 +452,17 @@ export class MinecraftRenderer {
     } else {
       this.targetedEntity = null;
     }
-    if (hits.length === 0) {
+
+    if (!blockHit) {
       this._highlightMesh.visible = false;
       this.targetedBlock = null;
       this.targetedFace = null;
       return;
     }
-    const hit = hits[0];
-    const gn = hit.face.normal;
 
-    // Block position: step a tiny amount inward along the face normal so we
-    // land inside the block that owns this face. Use 0.01 (not 0.5) so it
-    // works for both full-block faces (hit.point at integer boundary) AND
-    // interior model-block faces (ladder front at z+0.8125, etc.). A 0.5
-    // step overshoots interior faces and returns the wrong block.
-    const E = 0.01;
-    const bx = Math.floor(hit.point.x - gn.x * E);
-    const by = Math.floor(hit.point.y - gn.y * E);
-    const bz = Math.floor(hit.point.z - gn.z * E);
-    this.targetedBlock = { x: bx, y: by, z: bz };
-
-    // Face direction: the geometry normal from a real hit is always
-    // geometrically correct and should be trusted directly — this used to
-    // be unconditional, but a fallback was added for the OLD hand-written
-    // flat-colored ladder box (thick, 3/16 deep, with real clickable side
-    // surfaces): clicking that box's side edge could return its one visible
-    // face's normal instead of the side you actually clicked. That fallback
-    // used viewing angle (dot(normal, -ray) ≤ 0.5, i.e. >=60 degrees off
-    // normal) as a proxy for "this might be an edge click" — but viewing
-    // angle alone doesn't mean that at all: looking at any ordinary flat
-    // top face from a shallow angle (e.g. looking down slightly while
-    // walking) is >=60 degrees off normal very often, and the real block-
-    // model geometry (now covering ~1000 blocks, not just a hand-written
-    // special case) has no such ambiguity — a real ladder is now a
-    // paper-thin plane with no meaningful side surface to misfire on.
-    // Applying this correction to those hits was overriding perfectly
-    // correct top-face hits with a wrong guessed side face whenever viewed
-    // at anything but a steep angle — exactly the reported bug (sapling
-    // placement failing when aiming at the ground from a shallow angle).
-    // Scope the fallback to ONLY the flat-colored, non-textured meshes,
-    // where the old thick hand-written box can still appear (pre-load
-    // fallback window).
-    let fn = { x: gn.x, y: gn.y, z: gn.z };
-    if (!hit.object.userData.isTextured) {
-      const rd = this._raycaster.ray.direction;
-      const facesCamera = -(gn.x * rd.x + gn.y * rd.y + gn.z * rd.z) > 0.5;
-      if (!facesCamera) {
-        const ax = Math.abs(rd.x), ay = Math.abs(rd.y), az = Math.abs(rd.z);
-        if (ax >= ay && ax >= az)      fn = { x: rd.x < 0 ? 1 : -1, y: 0, z: 0 };
-        else if (ay >= ax && ay >= az) fn = { x: 0, y: rd.y < 0 ? 1 : -1, z: 0 };
-        else                           fn = { x: 0, y: 0, z: rd.z < 0 ? 1 : -1 };
-      }
-    }
-    this.targetedFace = fn;
-
-    this._highlightMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
+    this.targetedBlock = { x: blockHit.x, y: blockHit.y, z: blockHit.z };
+    this.targetedFace = blockHit.face;
+    this._highlightMesh.position.set(blockHit.x + 0.5, blockHit.y + 0.5, blockHit.z + 0.5);
     this._highlightMesh.visible = true;
   }
 

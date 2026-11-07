@@ -2,6 +2,7 @@
 // Receives {x, z, blocks}, builds geometry arrays, returns via transferable.
 
 import { resolveModels, flattenElements, FACE_TABLE } from './block-model.js';
+import { SELECTION_SHAPES } from './block-shapes.js';
 
 // Real per-block shape + atlas-UV data (prismarine-viewer's baked build
 // output, copied verbatim — see scripts/extract-assets/ for the mob/item
@@ -260,21 +261,12 @@ const NON_OCCLUDING_BLOCKS = new Set([
 // [{x0,y0,z0,x1,y1,z1}], 0–1 local block space. Blocks with a model (real
 // or hand-written) are excluded from the greedy mesher.
 const BLOCK_MODELS = {
-  ladder: (props) => {
-    const T = 0.1875; // 3/16 — matches vanilla ladder depth
-    // "facing" = direction the rungs face = direction away from the wall.
-    // The slab goes on the OPPOSITE side (flush against the wall it's attached to).
-    // facing=north → attached to south wall → slab at south (z high)
-    // facing=south → attached to north wall → slab at north (z low)
-    // facing=east  → attached to west wall  → slab at west  (x low)
-    // facing=west  → attached to east wall  → slab at east  (x high)
-    switch (props.facing) {
-      case 'north': return [{ x0:0, y0:0, z0:1-T, x1:1, y1:1, z1:1   }];
-      case 'south': return [{ x0:0, y0:0, z0:0,   x1:1, y1:1, z1:T   }];
-      case 'east':  return [{ x0:0, y0:0, z0:0,   x1:T, y1:1, z1:1   }];
-      default:      return [{ x0:1-T, y0:0, z0:0, x1:1, y1:1, z1:1   }]; // west
-    }
-  },
+  // Same thin slab used for the crosshair selection box (block-shapes.js) —
+  // this hand-written fallback render shape only applies before
+  // block_models.json has loaded; the real model afterward renders as a flat
+  // textured decal instead (see block-shapes.js for why that decal isn't
+  // reused for picking).
+  ladder: SELECTION_SHAPES.ladder,
 };
 
 // Derived set of block names that skip the greedy mesher (have a custom model).
