@@ -28,6 +28,9 @@ versions/
 
 # User Cache & Temp
 .mc-props-hash
+.mc-java.pid
+.restart-minecraft.pid
+.venv/
 .DS_Store
 *.swp
 *.swo
