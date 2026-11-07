@@ -1,5 +1,5 @@
 /**
- * Health / food / armor / air HUD, built from vanilla's own GUI sprites
+ * Health / food / armor / air / XP HUD, built from vanilla's own GUI sprites
  * (extracted from minecraft-assets into assets/textures/gui/hud/). Mirrors
  * vanilla's icon math: each heart/food/armor icon represents 2 points,
  * rendered full/half/empty.
@@ -15,6 +15,9 @@
 
 const ICON = 27; // 9px native sprite × 3
 const HUD = '/assets/textures/gui/hud';
+const XP_SCALE = 3;
+const XP_BAR_W = 182 * XP_SCALE; // 546, matches the hotbar's own 3x-scaled width
+const XP_BAR_H = 5 * XP_SCALE;
 
 function makeIconRow(count) {
   const row = document.createElement('div');
@@ -62,15 +65,18 @@ export class VitalsHud {
     const health = makeIconRow(10);
     const food = makeIconRow(10);
 
+    // Vanilla's bottom-up stacking: hotbar, then the XP bar (row 0), then
+    // health/food (row 1, sitting on top of the bar), then armor/air above
+    // that — so everything above row 0 shifts up by the bar's own height.
     armor.row.style.position = 'absolute';
     armor.row.style.left = '0';
-    armor.row.style.bottom = '29px';
+    armor.row.style.bottom = `${XP_BAR_H + 29}px`;
     armor.row.style.justifyContent = 'flex-start';
     armor.row.style.visibility = 'hidden'; // until the first vitals message says otherwise
 
     air.row.style.position = 'absolute';
     air.row.style.right = '0';
-    air.row.style.bottom = '29px';
+    air.row.style.bottom = `${XP_BAR_H + 29}px`;
     air.row.style.visibility = 'hidden';
     air.row.style.flexDirection = 'row-reverse'; // bubbles deplete right-to-left, like vanilla
     air.row.style.justifyContent = 'flex-start';
@@ -80,15 +86,55 @@ export class VitalsHud {
     hpFoodRow.style.position = 'absolute';
     hpFoodRow.style.left = '0';
     hpFoodRow.style.right = '0';
-    hpFoodRow.style.bottom = '0';
+    hpFoodRow.style.bottom = `${XP_BAR_H}px`;
     hpFoodRow.style.display = 'flex';
     hpFoodRow.style.justifyContent = 'space-between';
     hpFoodRow.appendChild(health.row);
     hpFoodRow.appendChild(food.row);
 
+    // XP bar: a fixed-size background sprite with a progress sprite laid on
+    // top whose *width* (not background-position) tracks the fill fraction —
+    // background-size stays pinned to the full bar's dimensions, so shrinking
+    // the div just clips the image to its left portion, matching vanilla's
+    // left-to-right fill. The level number sits centered just above the bar.
+    const xpBar = document.createElement('div');
+    xpBar.style.position = 'absolute';
+    xpBar.style.left = '0';
+    xpBar.style.bottom = '0';
+    xpBar.style.width = `${XP_BAR_W}px`;
+    xpBar.style.height = `${XP_BAR_H}px`;
+    xpBar.style.backgroundImage = `url(${HUD}/xp/background.png)`;
+    xpBar.style.backgroundSize = `${XP_BAR_W}px ${XP_BAR_H}px`;
+    xpBar.style.imageRendering = 'pixelated';
+    xpBar.style.visibility = 'hidden'; // until the first vitals message reports a level
+
+    const xpProgress = document.createElement('div');
+    xpProgress.style.position = 'absolute';
+    xpProgress.style.left = '0';
+    xpProgress.style.bottom = '0';
+    xpProgress.style.height = `${XP_BAR_H}px`;
+    xpProgress.style.width = '0';
+    xpProgress.style.backgroundImage = `url(${HUD}/xp/progress.png)`;
+    xpProgress.style.backgroundSize = `${XP_BAR_W}px ${XP_BAR_H}px`;
+    xpProgress.style.imageRendering = 'pixelated';
+    xpBar.appendChild(xpProgress);
+
+    const xpLevel = document.createElement('div');
+    xpLevel.style.position = 'absolute';
+    xpLevel.style.left = '50%';
+    xpLevel.style.bottom = `${XP_BAR_H}px`;
+    xpLevel.style.transform = 'translateX(-50%)';
+    xpLevel.style.fontSize = '12px';
+    xpLevel.style.fontWeight = 'bold';
+    xpLevel.style.color = '#80ff20';
+    xpLevel.style.textShadow = '1px 1px 0 #000';
+    xpLevel.style.whiteSpace = 'nowrap';
+    xpBar.appendChild(xpLevel);
+
     this.root.appendChild(armor.row);
     this.root.appendChild(air.row);
     this.root.appendChild(hpFoodRow);
+    this.root.appendChild(xpBar);
 
     this._armorRow = armor.row;
     this._armorIcons = armor.icons;
@@ -96,9 +142,12 @@ export class VitalsHud {
     this._airIcons = air.icons;
     this._healthIcons = health.icons;
     this._foodIcons = food.icons;
+    this._xpBar = xpBar;
+    this._xpProgress = xpProgress;
+    this._xpLevel = xpLevel;
   }
 
-  update({ health, food, armor, oxygen, inWater }) {
+  update({ health, food, armor, oxygen, inWater, xpLevel, xpProgress }) {
     if (health != null) {
       setPairBar(this._healthIcons, health, `${HUD}/heart/full.png`, `${HUD}/heart/half.png`, `${HUD}/heart/container.png`);
     }
@@ -131,6 +180,14 @@ export class VitalsHud {
           if (this._airIcons[i].style.backgroundImage !== bg) this._airIcons[i].style.backgroundImage = bg;
         }
       }
+    }
+    if (xpLevel != null) {
+      // Always visible once a level is known — unlike armor/air, the XP bar
+      // is a permanent fixture of vanilla's survival HUD, shown at level 0 too.
+      this._xpBar.style.visibility = 'visible';
+      const width = Math.round(XP_BAR_W * Math.max(0, Math.min(1, xpProgress || 0)));
+      this._xpProgress.style.width = `${width}px`;
+      if (this._xpLevel.textContent !== String(xpLevel)) this._xpLevel.textContent = String(xpLevel);
     }
   }
 }
