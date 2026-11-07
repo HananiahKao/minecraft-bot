@@ -15,6 +15,7 @@ import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
 import PrismarineBlock from 'prismarine-block';
 import PrismarineItem from 'prismarine-item';
+import prismarineChatLoader from 'prismarine-chat';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { readFileSync } from 'fs';
@@ -189,6 +190,9 @@ let positionBroadcastInterval = null;
 let _pickInProgress = false;
 let _digInProgress = false;
 let _digTarget = null;
+let _digMismatchTicks = 0;
+let _digCancelling = false; // true while we've asked mineflayer to stop but the in-flight dig promise hasn't settled yet
+let _digGeneration = 0; // bumped on every new bot.dig() call so a stale settle can't clobber a newer dig's state
 let _serverCanFly = false;
 let _reconnectScheduled = false;
 // Last look direction sent by the client — re-asserted every physics tick so
@@ -314,7 +318,10 @@ function initBot() {
     if (!connectedClients.length) return;
     const pos = newBlock.position;
     const newName = newBlock.name || 'air';
-    broadcastMessage({ type: 'block_update', x: pos.x, y: pos.y, z: pos.z, name: newName });
+    const msg = { type: 'block_update', x: pos.x, y: pos.y, z: pos.z, name: newName };
+    const newProps = newBlock._properties;
+    if (newProps && Object.keys(newProps).length > 0) msg.props = newProps;
+    broadcastMessage(msg);
 
     // When a solid block is removed it may expose neighbours that were skipped during
     // initial chunk load (interior occluded blocks).  Re-send their current state so
@@ -433,6 +440,7 @@ function initBot() {
   bot.on('health', () => broadcastVitals());
   bot.on('breath', () => broadcastVitals());
   bot.on('entityAttributes', (entity) => { if (entity === bot.entity) broadcastVitals(); });
+  bot.on('experience', () => broadcastVitals());
 
   bot.on('playerCollect', () => { broadcastHotbar(); broadcastInventory(); });
   bot.on('heldItemChanged', () => broadcastHotbar());
@@ -445,10 +453,12 @@ function initBot() {
 
   bot.on('windowOpen', (win) => {
     const mapItem = item => item ? { name: item.name, count: item.count, durabilityUsed: item.durabilityUsed || 0, maxDurability: item.maxDurability || 0 } : null;
+    const ChatMessage = prismarineChatLoader(bot.registry);
+    const title = win.title ? ChatMessage.fromNotch(win.title).toString() : String(win.type);
     broadcastMessage({
       type: 'window_open',
       windowType: win.type,
-      title: win.title || String(win.type),
+      title,
       slots: win.slots.slice(0, win.inventoryStart).map(mapItem),
       // Player main inventory (27 slots) and hotbar (9 slots) shown below container
       playerSlots: win.slots.slice(win.inventoryStart, win.inventoryStart + 36).map(mapItem),
@@ -636,6 +646,8 @@ function broadcastVitals() {
     armor: armorAttr ? armorAttr.value : 0,
     oxygen,
     inWater,
+    xpLevel: bot.experience.level,
+    xpProgress: bot.experience.progress,
   });
 }
 
@@ -825,6 +837,7 @@ wss.on('connection', (ws) => {
   }
 
   let _placeLastMs = 0;
+  let _attackLastMs = 0;
 
   ws.on('message', (data) => {
     try {
@@ -986,6 +999,23 @@ wss.on('connection', (ws) => {
             bot.activateEntity(entity).catch(e => console.warn('activateEntity failed:', e.message));
           }
         }
+      } else if (message.type === 'attack_entity' && botReady && bot) {
+        const entity = bot.entities[message.id];
+        // Only 'mob'/'player' are valid combat targets — entity.type can also be
+        // 'other' (item frames, paintings, armor stands, leash knots, ...), which
+        // the client's entity-manager still buckets as an attackable "mob" since
+        // it only excludes 'object'. Attacking one of those gets the server to
+        // kick us with "Attempting to attack an invalid entity".
+        const isAttackable = entity && entity !== bot.entity &&
+          (entity.type === 'mob' || entity.type === 'player');
+        if (isAttackable) {
+          const now = Date.now();
+          if (now - _attackLastMs >= 250) { // crude swing-rate limit; real attack-speed modeling not needed here
+            _attackLastMs = now;
+            // bot.attack() is synchronous (swings arm + sends use_entity directly), not promise-returning.
+            try { bot.attack(entity); } catch (e) { console.warn('attack failed:', e.message); }
+          }
+        }
       } else if (message.type === 'select_trade' && botReady && bot) {
         const win = bot.currentWindow;
         if (win && typeof message.index === 'number') {
@@ -1033,16 +1063,44 @@ wss.on('connection', (ws) => {
 
         const gm = bot.game && bot.game.gameMode;
         const canBreak = gm === 'survival' || gm === 'creative';
+        if (_digInProgress) {
+          // Raycasting can report a slightly different block for a single tick
+          // even while aiming at roughly the same spot (edge/corner jitter), so
+          // don't cancel on the first mismatch — only after it's sustained across
+          // several consecutive ticks, which means the player actually looked away
+          // (including looking at nothing, e.g. the sky, while still holding down).
+          const key = targetedBlock ? `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}` : null;
+          if (key !== _digTarget) {
+            _digMismatchTicks++;
+            if (_digMismatchTicks >= 3) {
+              if (!_digCancelling) {
+                console.log(`[dig debug] CANCEL via mismatch: target=${_digTarget} current=${key}`);
+                _digCancelling = true;
+                broadcastMessage({ type: 'dig_progress', x: null });
+              }
+              // _digInProgress/_digTarget are cleared only once the in-flight dig
+              // promise actually settles (see .finally() below) — never here —
+              // so a new bot.dig() can never be issued while the old one is still
+              // unresolved. Retry stopDigging() every tick while cancelling: the
+              // first call may land on a stale/no-op closure if the prior dig's
+              // internal lookAt hadn't resolved yet when we first asked to cancel.
+              try { bot.stopDigging(); } catch (e) {}
+            }
+          } else {
+            _digMismatchTicks = 0;
+          }
+        }
         if (controls.breakBlock && targetedBlock && canBreak) {
-          // Once a dig is in progress, never interrupt it due to raycaster flicker —
-          // stick with the current block until it breaks or the button is released.
+          const key = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
           if (!_digInProgress) {
             const pos = new Vec3(targetedBlock.x, targetedBlock.y, targetedBlock.z);
             const block = bot.blockAt(pos);
             if (block && block.name !== 'air' && block.diggable) {
+              const myGen = ++_digGeneration;
               _digInProgress = true;
-              _digTarget = `${targetedBlock.x},${targetedBlock.y},${targetedBlock.z}`;
-              console.log(`⛏️  Breaking ${block.name} at ${pos}`);
+              _digCancelling = false;
+              _digTarget = key;
+              console.log(`⛏️  Breaking ${block.name} at ${pos} | targetDigBlock before call: ${bot.targetDigBlock ? bot.targetDigBlock.position : 'null'}`);
               // bot.digTime already accounts for held tool/enchantments/effects —
               // send it once so the client can animate the crack overlay locally
               // from its own clock, instead of us pushing per-tick progress.
@@ -1054,21 +1112,24 @@ wss.on('connection', (ws) => {
               const digPromise = bot.dig(block);
               if (digPromise && typeof digPromise.catch === 'function') {
                 digPromise
-                  .catch(e => { if (e.message !== 'Digging aborted') console.warn('dig failed:', e.message); })
+                  .then(() => console.log(`[dig debug] completed ${key}`))
+                  .catch(e => console.log(`[dig debug] rejected ${key}: ${e.message}`))
                   .finally(() => {
-                    _digInProgress = false; _digTarget = null;
+                    if (myGen !== _digGeneration) return; // superseded by a newer dig; don't clobber its state
+                    _digInProgress = false; _digTarget = null; _digCancelling = false;
                     broadcastMessage({ type: 'dig_progress', x: null });
                   });
               } else {
-                _digInProgress = false; _digTarget = null;
+                _digInProgress = false; _digTarget = null; _digCancelling = false;
                 broadcastMessage({ type: 'dig_progress', x: null });
               }
             }
           }
-        } else if ((!controls.breakBlock || !canBreak) && _digInProgress) {
+        } else if ((!controls.breakBlock || !canBreak) && _digInProgress && !_digCancelling) {
+          console.log(`[dig debug] CANCEL via release: breakBlock=${controls.breakBlock} canBreak=${canBreak}`);
           try { bot.stopDigging(); } catch (e) {}
-          _digInProgress = false;
-          _digTarget = null;
+          _digCancelling = true;
+          _digMismatchTicks = 0;
           broadcastMessage({ type: 'dig_progress', x: null });
         }
         const isCreative = bot.game && bot.game.gameMode === 'creative';
@@ -1220,13 +1281,22 @@ server.listen(BRIDGE_PORT, '0.0.0.0', () => {
   console.log(`Minecraft: ${MINECRAFT_HOST}:${MINECRAFT_PORT}`);
 });
 
-process.on('SIGINT', () => {
+// SIGTERM too, not just SIGINT — scripts/restart-bridge.sh kills the old
+// process with plain `kill` (SIGTERM) on every file-change/crash restart.
+// Without a handler, Node's default SIGTERM disposition exits immediately
+// and skips bot.end() entirely, leaving the TCP connection to the Minecraft
+// server dangling — the old player entity then sits frozen in the world
+// (and keeps ticking, e.g. oxygen draining) until the server's own timeout
+// notices the dead socket and removes it, seconds later.
+function shutdown() {
   console.log('\n⏹️  Shutting down...');
   stopAllControls();
   if (bot) bot.end();
   wss.clients.forEach(client => client.close());
   server.close();
   process.exit(0);
-});
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 initBot();
