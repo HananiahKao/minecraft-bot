@@ -5,13 +5,18 @@ A custom 3D Minecraft rendering client built with Three.js, a mineflayer bridge 
 ## Features
 
 ### Implemented
-- **3D chunk rendering** — Three.js geometry built from server chunk data, textured with procedural colors
+- **3D chunk rendering** — Three.js geometry built from server chunk data, using real per-block models/textures (`block_models.json`, baked from vanilla assets) with flat procedural colors only as a fallback before that data loads or for unmapped blocks
+- **Fluid rendering** — water, glass, ice, and similar blocks render as real translucent geometry (not invisible gaps), in a separate transparent render pass
 - **Camera-synced movement** — WASD + mouse look; client predicts instantly, bot walks to match
-- **Block interaction** — raycasting crosshair, survival hold-to-break, creative instant-break, placement; all four gamemodes (creative, survival, adventure, spectator)
+- **Block interaction** — voxel-grid DDA raycasting crosshair (deterministic, no triangle-seam flicker), with liquid pass-through and real per-block selection shapes (e.g. ladders) instead of full-cube approximation; survival hold-to-break with crack-stage overlay, creative instant-break, placement; all four gamemodes (creative, survival, adventure, spectator)
 - **Block name HUD** — targeted block name + coordinates shown in status bar
-- **Entity rendering** — other players and mobs as colored box models (body + head)
-- **Inventory screen** — open/close bag, move items between slots
-- **Item entity rendering** — floating rotating cubes for dropped items
+- **Vitals HUD** — health, hunger/food, armor, air/bubble bar (shown while in water), and XP bar, built from vanilla's own GUI sprites
+- **Entity rendering** — other players and mobs rendered with real bone/box models and extracted vanilla textures (falls back to a plain colored box body+head when a mob has no usable texture)
+- **Entity interaction** — attacking mobs; trading with villagers/wandering traders via a real trade-selection UI
+- **Inventory / chest / window screens** — open/close, move items between slots, real item icons, tool durability bar on slots (see Known issues below for one gap)
+- **Item entity rendering** — floating rotating cubes for dropped items, textured when an icon is available
+- **Mobile/touch controls** — on-screen D-pad, look-drag, and action buttons on touch devices (iPad/phone)
+- **Chunk unloading** — chunks outside render radius are freed, not just accumulated
 - **Autonomous AI agents** — Claude Haiku-powered bots that navigate, dig, and build from a natural language goal
 - **Multi-agent manager UI** — spawn, monitor, message, and remove agents at `http://localhost:3001`
 - **Agent process isolation** — each agent runs as a detached OS process; restarting the manager does not kill running bots
@@ -19,23 +24,22 @@ A custom 3D Minecraft rendering client built with Three.js, a mineflayer bridge 
 - **Goal completion detection** — agent signals when done; UI shows banner + browser notification
 
 ### Not Implemented (TODOs)
-These are standard Minecraft HUD elements present in the official client but not yet built:
+These are standard Minecraft client elements not yet built, or built incompletely:
 
 | Feature | Notes |
 |---|---|
-| ❤️ Health bar | No HP display; bot respawns on death silently |
-| 🍗 Hunger/food bar | Food level not shown |
-| 🛡️ Armor bar | Equipped armor value not displayed |
-| 🫧 Air/bubble bar | Appears when underwater in official client; not implemented |
-| 📊 XP bar | Experience points not shown |
 | 🗺️ Minimap | No overhead map |
-| 💧 Fluid rendering | Water and lava blocks are invisible (transparent) |
-| 🌊 Fluid overlay | Blue tint when underwater / orange in lava not rendered |
-| ⛏️ Block break animation | No crack-overlay while mining in survival |
-| 🌓 Day/night sky | Sky is a static dark blue; no sun/moon/stars cycle |
+| 🌊 Fluid overlay | No blue tint when the camera is underwater / orange tint in lava — fluids render, but there's no screen-space overlay for being inside one |
+| 🤚 First-person hand | No arm/held-item model in view |
 | 🔊 Sound | No audio at all |
-| 🤚 First-person hand | No arm/item model in view |
-| 🔧 Tool durability bar | No decay bar on hotbar items |
+| 🌓 Day/night sky | Sky is a static sky-blue color + fog; no sun/moon/stars or day/night cycle |
+| 🔧 Tool durability bar (partial) | Shown on hotbar/inventory/chest slots, but not on the item while it's being dragged (held on the cursor between clicks) — `makeItemVisual()` in `item-icon.js` only draws the icon/name, the durability overlay is added separately by each slot's own render code, and the cursor-drag render path never adds it |
+
+---
+
+## Known issues
+
+- **Camera faces a fixed direction on every page load/reconnect**, regardless of which way the bot was actually facing. This is a rendering-client bug, not a Minecraft-server artifact: `InputHandler` (`rendering-client/src/input.js`) always constructs with `_yaw = 0, _pitch = 0`, and the bridge never sends the bot's current look direction for the client to sync against on connect — there's simply no code path that reads the bot's actual yaw/pitch into the camera. Fixing this means having the bridge include `bot.entity.yaw`/`pitch` in its spawn/connect message and having `main.js` apply it to `inputHandler` before the first frame.
 
 ---
 
@@ -44,7 +48,7 @@ These are standard Minecraft HUD elements present in the official client but not
 ```
 ┌─────────────────────┐       WebSocket :8080      ┌──────────────────────┐
 │  Minecraft Server   │◄─────────────────────────► │  Bridge (mineflayer) │
-│  vanilla 1.19.4     │       port 25565           │  server-bridge.js    │
+│  vanilla 1.21.9     │       port 25565           │  server-bridge.js    │
 │  offline mode       │                            └──────────┬───────────┘
 └─────────────────────┘                                       │ WebSocket :8080
                                                               │
@@ -70,7 +74,7 @@ These are standard Minecraft HUD elements present in the official client but not
 
 | Component | Entry point | Port | Description |
 |---|---|---|---|
-| Minecraft server | `java -jar server.jar nogui` | 25565 | Vanilla 1.19.4, offline mode |
+| Minecraft server | `java -jar server.jar nogui` | 25565 | Vanilla 1.21.9, offline mode |
 | Bridge | `bridge/server-bridge.js` | 8080 (WS) | mineflayer bot; streams chunks, relays input |
 | Rendering client | `rendering-client/server.js` | 3000 (HTTP) | Three.js 3D view in the browser |
 | Agent manager | `bridge/agent-manager.js` | 3001 (HTTP+WS) | Spawn/monitor AI agent bots |
@@ -118,7 +122,7 @@ tmux attach-session -t minecraft-bot
 
 | Window | Name | What runs |
 |---|---|---|
-| 0 | `minecraft` | Vanilla Minecraft 1.19.4 server |
+| 0 | `minecraft` | Vanilla Minecraft 1.21.9 server |
 | 1 | `bridge` | mineflayer bridge bot (port 8080) |
 | 2 | `client` | Three.js rendering client (port 3000) |
 | 3 | `agents` | Agent Manager (port 3001) |
@@ -178,8 +182,6 @@ Open `http://localhost:3001` in a browser.
 - **Single bridge bot** — the rendering client shares one mineflayer bot (username `RenderBot`). Agents each connect as a separate named bot.
 - **Agent costs** — each reasoning step calls Claude via your API account. Expect roughly $0.01–0.05 per agent task with Haiku.
 - **Agent respawn** — agents do not handle death gracefully; they respawn but may lose context.
-- **No chunk unloading** — the renderer accumulates chunks and never frees them; very long sessions use more memory.
-- **Fluid blocks invisible** — water and lava render as transparent gaps.
 - **Ladders** — bot physics on ladders can be unreliable due to mineflayer edge cases.
 - **server.properties** — committed for convenience; adjust `level-seed`, `max-players`, `online-mode`, etc. as needed.
 - **Registry file** — `bridge/.agents-registry.json` is runtime state (gitignored). Delete it if stale entries prevent agents from starting.
@@ -202,15 +204,27 @@ Open `http://localhost:3001` in a browser.
 minecraft-bot/
 ├── bridge/
 │   ├── server-bridge.js    # mineflayer bridge (rendering bot)
+│   ├── chunk-worker.js     # Worker thread: BFS visibility flood-fill
 │   ├── agent-manager.js    # HTTP+WS manager for AI agents
 │   ├── agent-runner.js     # per-agent detached process
 │   └── agent-bot.js        # AgentBot class (mineflayer + Claude loop)
 ├── rendering-client/
 │   ├── server.js           # static HTTP server
 │   └── src/
-│       ├── main.js         # Three.js scene, input, HUD
-│       ├── renderer.js     # chunk/entity rendering
-│       └── worker.js       # Web Worker: chunk mesh building
+│       ├── main.js            # Three.js scene, input, HUD wiring
+│       ├── renderer.js        # chunk/entity rendering + block raycast (DDA)
+│       ├── chunk-worker.js    # Web Worker: chunk mesh building
+│       ├── block-model.js     # resolves vanilla block_models.json variants
+│       ├── block-shapes.js    # liquid/selection-shape data for raycasting
+│       ├── entity-manager.js  # mob/player/item entity rendering
+│       ├── mob-model.js       # real bone/box mob models + UV unwrap
+│       ├── input.js           # keyboard/mouse/touch input → controls
+│       ├── mobile.js          # touch control overlay
+│       ├── connection.js      # WebSocket client to the bridge
+│       ├── inventory.js       # player inventory screen
+│       ├── window-screen.js   # chest/villager/other window screens
+│       ├── item-icon.js       # shared item icon/durability helpers
+│       └── vitals-hud.js      # health/food/armor/air/XP HUD
 ├── agent-ui/
 │   └── index.html          # Agent manager browser UI
 ├── scripts/
