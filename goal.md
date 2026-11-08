@@ -34,53 +34,58 @@ Block interaction (breaking/placing)
 ### Phase 4
 Polish & visual completeness — make it feel like the official client
 - [x] Item entity rendering (floating rotating cubes when blocks are broken)
-- [ ] Tool durability bar in hotbar and inventory slots (green→yellow→red decay bar)
+- [x] Tool durability bar in hotbar and inventory/chest slots (still missing on the item while it's being dragged on the cursor — see README's "Known issues")
 - [ ] Camera fluid overlay: blue tint when underwater, orange when in lava
-- [ ] Water/lava block rendering (transparent, currently invisible)
-- [ ] Block breaking animation (crack overlay while mining)
+- [x] Water/lava/glass/ice block rendering (real translucent geometry, not invisible)
+- [x] Block breaking animation (crack-stage overlay while mining)
 - [ ] First-person hand/arm model holding held item
-- [ ] Health & hunger HUD (survival mode)
-- [x] Entity rendering: other players, mobs (colored box models — body + head)
-- [x] Inventory screen (open/close bag, move items)
+- [x] Health & hunger HUD (survival mode), plus armor, air/bubble, and XP bars
+- [x] Entity rendering: other players, mobs — real bone/box models with extracted vanilla textures (falls back to a colored box body+head when no texture is available)
+- [x] Inventory screen (open/close bag, move items), plus chest/villager window screens
+- [x] Entity interaction: attacking mobs, trading with villagers/wandering traders
+- [ ] Minimap
+- [ ] Sound/audio
+- [ ] Day/night sky cycle (sun/moon/stars) — sky is currently a static color + fog
 - [ ] Spectator: inside-block visual (official client shows darkness/fog, we show chunk void)
 
-### Phase 5
-Autonomous worker bots — separate agent processes that connect to the same bridge server as additional named bots, each appearing as a distinct player entity in the world.
+Known bug from this phase: the camera defaults to a fixed look direction on every page load/reconnect instead of the bot's actual facing — see README's "Known issues" for the root cause (client never receives or applies the bot's real yaw/pitch).
 
-**Architecture**
-- Bridge server refactored to support multiple simultaneous bot connections (one per named identity)
-- Each bot is an independent Mineflayer instance registered with the bridge under a name (e.g. `woodcutter`, `porter`)
-- Rendering client can switch spectator view to any bot — camera locks to that bot's position/yaw/pitch
-- Worker bots expose a task API over WebSocket so the CLI tool or an AI agent can issue jobs
+### Phase 5 ✅ (achieved via a different architecture than originally planned)
+Autonomous worker bots — the *goal* (independent bot processes that take on tasks from a natural-language instruction) is done, but the design that shipped diverges from what was originally sketched below. Built instead:
+- `bridge/agent-manager.js` — HTTP+WS manager (port 3001) that spawns/monitors/messages/removes agents, with a browser UI (`agent-ui/index.html`) instead of a CLI tool
+- `bridge/agent-runner.js` — each agent is a detached OS process (not just a registered name on the shared bridge connection), so restarting the manager never kills running bots
+- `bridge/agent-bot.js` — each runner connects its own independent Mineflayer bot under its own name and runs an observe → call Claude Haiku → parse `<tool_call>` → act loop
+- Natural-language goals instead of fixed worker types — there's no dedicated tree-chopper/porter/farmer; a single general agent takes any goal and improvises via `move_to`, `find_block`, `dig_block`, `place_block`, `get_surroundings`, `chat`, `run_command`
+- Claude Haiku (via the `claude` CLI, your own API account) instead of a local Ollama endpoint — no hand-coded-script fallback was built
+- No spectator POV-switching to watch an agent's view yet — the original plan's bot-selector UI never got built
 
-**Worker tasks (planned)**
-- [ ] Tree chopper: watches saplings planted by the player, waits for growth, fells the tree, collects logs
-- [ ] Porter: moves items from a designated drop zone into labeled chests
-- [ ] Farmer: plants, tends, and harvests crops in a designated area
+The items below are the original plan, kept for history — most are superseded by the above rather than literally done:
 
-**AI agent integration**
-- Separate CLI tool (`bot-agent`) that connects to the bridge and issues task commands
-- Uses a local Ollama endpoint (no API key required) for natural-language task planning
-- Agent decides which worker bot to assign, breaks the goal into primitive bridge commands
-- Fallback: hand-coded task scripts usable without any LLM
+**Original architecture (superseded)**
+- Bridge server refactored to support multiple simultaneous bot connections (one per named identity) — *superseded: each agent is its own detached process with its own bot connection, not a multiplexed shared bridge*
+- Rendering client can switch spectator view to any bot — camera locks to that bot's position/yaw/pitch — *not built*
+- Worker bots expose a task API over WebSocket so the CLI tool or an AI agent can issue jobs — *superseded by the HTTP+WS agent-manager API*
 
-**Spectator mode**
-- [ ] Bridge refactor: multi-bot support, named bot registry
+**Worker tasks (planned, not built as such)**
+- [ ] Tree chopper, Porter, Farmer as dedicated named worker types — general agents can attempt these via natural-language goals instead
+
+**AI agent integration (superseded)**
+- ~~Separate CLI tool (`bot-agent`)~~ → built as a manager + browser UI instead
+- ~~Local Ollama endpoint~~ → uses Claude Haiku via the `claude` CLI instead
+- ~~Hand-coded task scripts fallback~~ → not built; no-LLM fallback doesn't exist
+
+**Spectator mode (not built)**
 - [ ] Rendering client: bot selector UI (switch which bot's POV you see)
-- [ ] Worker bot scaffold: connect, navigate, interact loop
-- [ ] Tree chopper implementation
-- [ ] Porter implementation
-- [ ] Ollama task-planning integration (optional, requires local Ollama install)
 
 ## "Fully Playable" Definition
 Everything the official client offers that applies to the current gamemode:
 - Viewing/exploring (all modes) ✅
-- Walking with physics (all modes)
-- Flying (creative/spectator only)
-- Block breaking/placing (creative/survival/adventure)
-- Inventory management
-- Combat/interaction
-- All server rules respected
+- Walking with physics (all modes) ✅
+- Flying (creative/spectator only) ✅
+- Block breaking/placing (creative/survival/adventure) ✅
+- Inventory management ✅
+- Combat/interaction ✅
+- All server rules respected ✅
 
 ## Decision Framework
 When ambiguity arises:
